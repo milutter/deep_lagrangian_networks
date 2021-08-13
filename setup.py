@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='deep_lagrangian_networks',
     version='0.1',
-    url='https://github.com/milutter/deep_lagrangian_networks.git',
+    url='https://git.ias.informatik.tu-darmstadt.de/lutter/deep_lagrangian_networks',
 
     description='This package provides an implementation of a Deep Lagrangian Networks.',
 

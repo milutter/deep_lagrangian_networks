@@ -35,15 +35,23 @@ def load_dataset(n_characters=3, filename="data/DeLaN_Data.pickle"):
     n_dof = 2
 
     # Split the dataset in train and test set:
-    test_idx = np.random.choice(len(data["labels"]), n_characters, replace=False)
-    # test_idx = np.array([0, 4, 6], dtype=int)
+
+    # Random Test Set:
+    # test_idx = np.random.choice(len(data["labels"]), n_characters, replace=False)
+
+    # Specified Test Set:
+    test_char = ["e", "q", "v"]
+    test_idx = [data["labels"].index(x) for x in test_char]
 
     train_labels, test_labels = [], []
     train_qp, train_qv, train_qa, train_tau = np.zeros((0, n_dof)), np.zeros((0, n_dof)), np.zeros((0, n_dof)), np.zeros((0, n_dof))
+    train_p, train_pd = np.zeros((0, n_dof)), np.zeros((0, n_dof))
+
     test_qp, test_qv, test_qa, test_tau = np.zeros((0, n_dof)), np.zeros((0, n_dof)), np.zeros((0, n_dof)), np.zeros((0, n_dof))
     test_m, test_c, test_g = np.zeros((0, n_dof)), np.zeros((0, n_dof)), np.zeros((0, n_dof))
+    test_p, test_pd = np.zeros((0, n_dof)), np.zeros((0, n_dof))
 
-    divider = [0, ]    # Contains idx between characters for plotting
+    divider = [0, ]   # Contains idx between characters for plotting
 
     for i in range(len(data["labels"])):
 
@@ -53,9 +61,13 @@ def load_dataset(n_characters=3, filename="data/DeLaN_Data.pickle"):
             test_qv = np.vstack((test_qv, data["qv"][i]))
             test_qa = np.vstack((test_qa, data["qa"][i]))
             test_tau = np.vstack((test_tau, data["tau"][i]))
+
             test_m = np.vstack((test_m, data["m"][i]))
             test_c = np.vstack((test_c, data["c"][i]))
             test_g = np.vstack((test_g, data["g"][i]))
+
+            test_p = np.vstack((test_p, data["p"][i]))
+            test_pd = np.vstack((test_pd, data["pdot"][i]))
             divider.append(test_qp.shape[0])
 
         else:
@@ -65,6 +77,9 @@ def load_dataset(n_characters=3, filename="data/DeLaN_Data.pickle"):
             train_qa = np.vstack((train_qa, data["qa"][i]))
             train_tau = np.vstack((train_tau, data["tau"][i]))
 
-    return (train_labels, train_qp, train_qv, train_qa, train_tau), \
-           (test_labels, test_qp, test_qv, test_qa, test_tau, test_m, test_c, test_g),\
+            train_p = np.vstack((train_p, data["p"][i]))
+            train_pd = np.vstack((train_pd, data["pdot"][i]))
+
+    return (train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau), \
+           (test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g),\
            divider

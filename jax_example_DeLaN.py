@@ -1,9 +1,14 @@
 import argparse
+import sys
+import optax
 import torch
 import numpy as np
 import time
-
+import jax
+import jax.numpy as jnp
 import matplotlib as mp
+import haiku as hk
+import dill as pickle
 
 try:
     mp.use("Qt5Agg")
@@ -16,8 +21,8 @@ except ImportError:
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-from deep_lagrangian_networks.DeLaN_model import DeepLagrangianNetwork
-from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
+import deep_lagrangian_networks.jax_DeLaN_model as delan
+from deep_lagrangian_networks.replay_memory import ReplayMemory
 from deep_lagrangian_networks.utils import load_dataset, init_env
 
 
@@ -30,14 +35,38 @@ if __name__ == "__main__":
     parser.add_argument("-s", nargs=1, type=int, required=False, default=[42, ], help="Set the random seed")
     parser.add_argument("-r", nargs=1, type=int, required=False, default=[1, ], help="Render the figure")
     parser.add_argument("-l", nargs=1, type=int, required=False, default=[0, ], help="Load the DeLaN model")
-    parser.add_argument("-m", nargs=1, type=int, required=False, default=[0, ], help="Save the DeLaN model")
+    parser.add_argument("-m", nargs=1, type=int, required=False, default=[1, ], help="Save the DeLaN model")
     seed, cuda, render, load_model, save_model = init_env(parser.parse_args())
+
+    rng_key = jax.random.PRNGKey(seed)
+
+    # Construct Hyperparameters:
+    hyper = {'n_width': 64,
+             'n_depth': 2,
+             'n_minibatch': 512,
+             'diagonal_epsilon': 0.01,
+             'activation': jax.nn.softplus,
+             'learning_rate': 5.e-04,
+             'weight_decay': 1.e-5,
+             'max_epoch': 10000,
+             'lagrangian_type': delan.structured_lagrangian_fn,
+             # 'lagrangian_type': delan.blackbox_lagrangian_fn,
+             }
+
+    model_id = "black_box"
+    if hyper['lagrangian_type'].__name__ == 'structured_lagrangian_fn':
+        model_id = "structured"
 
     # Read the dataset:
     n_dof = 2
     train_data, test_data, divider = load_dataset()
-    train_labels, train_qp, train_qv, train_qa, train_tau = train_data
-    test_labels, test_qp, test_qv, test_qa, test_tau, test_m, test_c, test_g = test_data
+    train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
+    test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
+
+    # Generate Replay Memory:
+    mem_dim = ((n_dof,), (n_dof,), (n_dof,), (n_dof,))
+    mem = ReplayMemory(train_qp.shape[0], hyper["n_minibatch"], mem_dim)
+    mem.add_samples([train_qp, train_qv, train_qa, train_tau])
 
     print("\n\n################################################")
     print("Characters:")
@@ -48,158 +77,125 @@ if __name__ == "__main__":
 
     # Training Parameters:
     print("\n################################################")
-    print("Training Deep Lagrangian Networks (DeLaN):")
-
-    # Construct Hyperparameters:
-    hyper = {'n_width': 64,
-             'n_depth': 2,
-             'diagonal_epsilon': 0.01,
-             'activation': 'SoftPlus',
-             'b_init': 1.e-4,
-             'b_diag_init': 0.001,
-             'w_init': 'xavier_normal',
-             'gain_hidden': np.sqrt(2.),
-             'gain_output': 0.1,
-             'n_minibatch': 512,
-             'learning_rate': 5.e-04,
-             'weight_decay': 1.e-5,
-             'max_epoch': 10000}
+    print("Training Deep Lagrangian Networks (DeLaN):\n")
 
     # Load existing model parameters:
-    if load_model:
-        load_file = "data/delan_model.torch"
-        state = torch.load(load_file)
+    t0 = time.perf_counter()
 
-        delan_model = DeepLagrangianNetwork(n_dof, **state['hyper'])
-        delan_model.load_state_dict(state['state_dict'])
-        delan_model = delan_model.cuda() if cuda else delan_model.cpu()
+    # Construct DeLaN:
+    q, qd, qdd, tau = [jnp.array(x) for x in next(iter(mem))]
+    rng_key, init_key = jax.random.split(rng_key)
+
+    if load_model:
+        with open(f"data/delan_{model_id}_model.jax", 'rb') as f:
+            data = pickle.load(f)
+
+        hyper = data["hyper"]
+        params = data["params"]
 
     else:
-        # Construct DeLaN:
-        delan_model = DeepLagrangianNetwork(n_dof, **hyper)
-        delan_model = delan_model.cuda() if cuda else delan_model.cpu()
+        params = None
+
+    lagrangian_fn = hk.transform(jax.partial(
+        hyper['lagrangian_type'],
+        n_dof=n_dof,
+        shape=(hyper['n_width'],) * hyper['n_depth'],
+        activation=hyper['activation'],
+        epsilon=hyper['diagonal_epsilon'],
+    ))
+
+    # Initialize Parameters:
+    if params is None:
+        params = lagrangian_fn.init(init_key, q[0], qd[0])
+
+    # Trace Model:
+    lagrangian = lagrangian_fn.apply
+    delan_model = jax.jit(jax.partial(delan.dynamics_model, lagrangian=lagrangian))
+    _ = delan_model(params, None, q[:1], qd[:1], qdd[:1], tau[:1])
+    t_build = time.perf_counter() - t0
+    print(f"DeLaN Build Time     = {t_build:.2f}s")
 
     # Generate & Initialize the Optimizer:
-    optimizer = torch.optim.Adam(delan_model.parameters(),
-                                 lr=hyper["learning_rate"],
-                                 weight_decay=hyper["weight_decay"],
-                                 amsgrad=True)
+    t0 = time.perf_counter()
 
-    # Generate Replay Memory:
-    mem_dim = ((n_dof, ), (n_dof, ), (n_dof, ), (n_dof, ))
-    mem = PyTorchReplayMemory(train_qp.shape[0], hyper["n_minibatch"], mem_dim, cuda)
-    mem.add_samples([train_qp, train_qv, train_qa, train_tau])
+    optimizer = optax.adamw(
+        learning_rate=hyper['learning_rate'],
+        weight_decay=hyper['weight_decay']
+    )
+
+    opt_state = optimizer.init(params)
+
+    def update_fn(params, opt_state, q, qd, qdd, tau):
+        loss_fn = jax.partial(delan.inverse_loss_fn, lagrangian=lagrangian)
+        (_, logs), grads = jax.value_and_grad(loss_fn, 0, has_aux=True)(params, q, qd, qdd, tau)
+
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, logs
+
+    update_fn = jax.jit(update_fn)
+    _, _, logs = update_fn(params, opt_state, q[:1], qd[:1], qdd[:1], tau[:1])
+
+    t_build = time.perf_counter() - t0
+    print(f"Optimizer Build Time = {t_build:.2f}s")
 
     # Start Training Loop:
     t0_start = time.perf_counter()
 
+    print("")
     epoch_i = 0
     while epoch_i < hyper['max_epoch'] and not load_model:
-        l_mem_mean_inv_dyn, l_mem_var_inv_dyn = 0.0, 0.0
-        l_mem_mean_dEdt, l_mem_var_dEdt = 0.0, 0.0
-        l_mem, n_batches = 0.0, 0.0
+        n_batches = 0
+        logs = jax.tree_map(lambda x: x * 0.0, logs)
 
-        for q, qd, qdd, tau in mem:
+        for data_batch in mem:
             t0_batch = time.perf_counter()
 
-            # Reset gradients:
-            optimizer.zero_grad()
+            q, qd, qdd, tau = [jnp.array(x) for x in data_batch]
+            params, opt_state, batch_logs = update_fn(params, opt_state, q, qd, qdd, tau)
 
-            # Compute the Rigid Body Dynamics Model:
-            tau_hat, dEdt_hat = delan_model(q, qd, qdd)
-
-            # Compute the loss of the Euler-Lagrange Differential Equation:
-            err_inv = torch.sum((tau_hat - tau) ** 2, dim=1)
-            l_mean_inv_dyn = torch.mean(err_inv)
-            l_var_inv_dyn = torch.var(err_inv)
-
-            # Compute the loss of the Power Conservation:
-            dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau.view(-1, 2, 1)).view(-1)
-            err_dEdt = (dEdt_hat - dEdt) ** 2
-            l_mean_dEdt = torch.mean(err_dEdt)
-            l_var_dEdt = torch.var(err_dEdt)
-
-            # Compute gradients & update the weights:
-            loss = l_mean_inv_dyn + l_mem_mean_dEdt
-            loss.backward()
-            optimizer.step()
-
-            # Update internal data:
+            # Update logs:
             n_batches += 1
-            l_mem += loss.item()
-            l_mem_mean_inv_dyn += l_mean_inv_dyn.item()
-            l_mem_var_inv_dyn += l_var_inv_dyn.item()
-            l_mem_mean_dEdt += l_mean_dEdt.item()
-            l_mem_var_dEdt += l_var_dEdt.item()
-
+            logs = jax.tree_map(lambda x, y: x + y, logs, batch_logs)
             t_batch = time.perf_counter() - t0_batch
 
         # Update Epoch Loss & Computation Time:
-        l_mem_mean_inv_dyn /= float(n_batches)
-        l_mem_var_inv_dyn /= float(n_batches)
-        l_mem_mean_dEdt /= float(n_batches)
-        l_mem_var_dEdt /= float(n_batches)
-        l_mem /= float(n_batches)
         epoch_i += 1
+        logs = jax.tree_map(lambda x: x/n_batches, logs)
 
         if epoch_i == 1 or np.mod(epoch_i, 100) == 0:
             print("Epoch {0:05d}: ".format(epoch_i), end=" ")
-            print("Time = {0:05.1f}s".format(time.perf_counter() - t0_start), end=", ")
-            print("Loss = {0:.3e}".format(l_mem), end=", ")
-            print("Inv Dyn = {0:.3e} \u00B1 {1:.3e}".format(l_mem_mean_inv_dyn, 1.96 * np.sqrt(l_mem_var_inv_dyn)), end=", ")
-            print("Power Con = {0:.3e} \u00B1 {1:.3e}".format(l_mem_mean_dEdt, 1.96 * np.sqrt(l_mem_var_dEdt)))
+            print(f"Time = {time.perf_counter() - t0_start:05.1f}s", end=", ")
+            print(f"Loss = {logs['loss']:.1e}", end=", ")
+            print(f"Inv = {logs['inverse_mean']:.1e} \u00B1 {1.96 * np.sqrt(logs['inverse_var']):.1e}", end=", ")
+            print(f"For = {logs['forward_mean']:.1e} \u00B1 {1.96 * np.sqrt(logs['forward_var']):.1e}", end=", ")
+            print(f"Power = {logs['energy_mean']:.1e} \u00B1 {1.96 * np.sqrt(logs['energy_var']):.1e}")
 
     # Save the Model:
     if save_model:
-        torch.save({"epoch": epoch_i,
-                    "hyper": hyper,
-                    "state_dict": delan_model.state_dict()},
-                    "data/delan_model.torch")
+        with open(f"data/delan_{model_id}_model.jax", "wb") as file:
+            pickle.dump(
+                {"epoch": epoch_i,
+                 "hyper": hyper,
+                 "params": params},
+                file)
 
     print("\n################################################")
     print("Evaluating DeLaN:")
 
-    # Compute the inertial, centrifugal & gravitational torque using batched samples
-    t0_batch = time.perf_counter()
-
     # Convert NumPy samples to torch:
-    q = torch.from_numpy(test_qp).float().to(delan_model.device)
-    qd = torch.from_numpy(test_qv).float().to(delan_model.device)
-    qdd = torch.from_numpy(test_qa).float().to(delan_model.device)
-    zeros = torch.zeros_like(q).float().to(delan_model.device)
+    q, qd, qdd = jnp.array(test_qp), jnp.array(test_qv), jnp.array(test_qa)
+    p, pd = jnp.array(test_p), jnp.array(test_pd)
+    zeros = jnp.zeros_like(q)
 
     # Compute the torque decomposition:
-    with torch.no_grad():
-        delan_g = delan_model.inv_dyn(q, zeros, zeros).cpu().numpy().squeeze()
-        delan_c = delan_model.inv_dyn(q, qd, zeros).cpu().numpy().squeeze() - delan_g
-        delan_m = delan_model.inv_dyn(q, zeros, qdd).cpu().numpy().squeeze() - delan_g
+    delan_g = delan_model(params, None, q, zeros, zeros, zeros)[1]
+    delan_c = delan_model(params, None, q, qd, zeros, zeros)[1] - delan_g
+    delan_m = delan_model(params, None, q, zeros, qdd, zeros)[1] - delan_g
 
-    t_batch = (time.perf_counter() - t0_batch) / (3. * float(test_qp.shape[0]))
-
-    # Move model to the CPU:
-    delan_model.cpu()
-
-    # Compute the joint torque using single samples on the CPU. The evaluation is done using only single samples to
-    # imitate the online control-loop. These online computation are performed on the CPU as this is faster for single
-    # samples.
-
-    delan_tau, delan_dEdt = np.zeros(test_qp.shape), np.zeros((test_qp.shape[0], 1))
     t0_evaluation = time.perf_counter()
-    for i in range(test_qp.shape[0]):
-
-        with torch.no_grad():
-
-            # Convert NumPy samples to torch:
-            q = torch.from_numpy(test_qp[i]).float().view(1, -1)
-            qd = torch.from_numpy(test_qv[i]).float().view(1, -1)
-            qdd = torch.from_numpy(test_qa[i]).float().view(1, -1)
-
-            # Compute predicted torque:
-            out = delan_model(q, qd, qdd)
-            delan_tau[i] = out[0].cpu().numpy().squeeze()
-            delan_dEdt[i] = out[1].cpu().numpy()
-
-    t_eval = (time.perf_counter() - t0_evaluation) / float(test_qp.shape[0])
+    delan_tau = delan_model(params, None, q, qd, qdd, 0.0 * q)[1]
+    t_eval = (time.perf_counter() - t0_evaluation) / float(q.shape[0])
 
     # Compute Errors:
     test_dEdt = np.sum(test_tau * test_qv, axis=1).reshape((-1, 1))
@@ -207,14 +203,12 @@ if __name__ == "__main__":
     err_m = 1. / float(test_qp.shape[0]) * np.sum((delan_m - test_m) ** 2)
     err_c = 1. / float(test_qp.shape[0]) * np.sum((delan_c - test_c) ** 2)
     err_tau = 1. / float(test_qp.shape[0]) * np.sum((delan_tau - test_tau) ** 2)
-    err_dEdt = 1. / float(test_qp.shape[0]) * np.sum((delan_dEdt - test_dEdt) ** 2)
 
     print("\nPerformance:")
     print("                Torque MSE = {0:.3e}".format(err_tau))
     print("              Inertial MSE = {0:.3e}".format(err_m))
     print("Coriolis & Centrifugal MSE = {0:.3e}".format(err_c))
     print("         Gravitational MSE = {0:.3e}".format(err_g))
-    print("    Power Conservation MSE = {0:.3e}".format(err_dEdt))
     print("      Comp Time per Sample = {0:.3e}s / {1:.1f}Hz".format(t_eval, 1./t_eval))
 
     print("\n################################################")
@@ -373,8 +367,8 @@ if __name__ == "__main__":
     ax0.plot(delan_g[:, 0], color=color_i[0], alpha=plot_alpha)
     ax1.plot(delan_g[:, 1], color=color_i[0], alpha=plot_alpha)
 
-    fig.savefig("figures/DeLaN_Performance.pdf", format="pdf")
-    fig.savefig("figures/DeLaN_Performance.png", format="png")
+    fig.savefig(f"figures/jax_DeLaN_{model_id}_Performance.pdf", format="pdf")
+    fig.savefig(f"figures/jax_DeLaN_{model_id}_Performance.png", format="png")
 
     if render:
         plt.show()

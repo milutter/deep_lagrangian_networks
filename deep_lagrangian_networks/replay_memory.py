@@ -2,7 +2,7 @@ import warnings
 import numpy as np
 import numpy.random as random
 import torch
-
+import jax.numpy as jnp
 
 def warning_on_one_line(message, category, filename, lineno, file=None, line=None):
     return '%s:%s: %s: %s\n' % (filename, lineno, category.__name__, message)
@@ -107,7 +107,6 @@ class PyTorchReplayMemory(ReplayMemory):
 
         # Add samples to the Replay Memory:
         super(PyTorchReplayMemory, self).add_samples(tmp_data)
-
 
 class PyTorchTestMemory(PyTorchReplayMemory):
     def __init__(self, max_samples, minibatch_size, dim, cuda):
