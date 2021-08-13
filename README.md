@@ -50,7 +50,7 @@ Figure 2: (a) The torque $`\bm{\tau}`$ required to generate the characters 'a', 
 **Installation:** \
 For installation this python package can be cloned and installed via pip
 ```
-git clone https://git.ias.informatik.tu-darmstadt.de/lutter/deep_lagrangian_networks.git deep_lagrangian_networks
+git clone https://github.com/milutter/deep_lagrangian_networks.git deep_lagrangian_networks
 pip install deep_lagrangian_networks
 
 python deep_lagrangian_networks/example_DeLaN.py -r 1
