@@ -34,6 +34,10 @@ def load_dataset(n_characters=3, filename="data/DeLaN_Data.pickle"):
 
     n_dof = 2
 
+    dt = np.concatenate([t[1:] - t[:-1] for t in data["t"]])
+    dt_mean, dt_var = np.mean(dt), np.var(dt)
+    assert dt_var < 1.e-12
+
     # Split the dataset in train and test set:
 
     # Random Test Set:
@@ -82,4 +86,4 @@ def load_dataset(n_characters=3, filename="data/DeLaN_Data.pickle"):
 
     return (train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau), \
            (test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g),\
-           divider
+           divider, dt_mean

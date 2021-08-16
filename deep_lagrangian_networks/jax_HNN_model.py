@@ -8,6 +8,7 @@ from deep_lagrangian_networks.jax_DeLaN_model import mass_matrix_fn, potential_e
 # For HNN the predicted mass matrix inverse is composed of the LL^{T} + eps I.
 inv_mass_matrix_fn = mass_matrix_fn
 
+
 def kinetic_energy_fn(q, p, n_dof, shape, activation, epsilon):
     inv_mass_mat = inv_mass_matrix_fn(q, n_dof, shape, activation, epsilon)
     return 1. / 2. * jnp.dot(p, jnp.dot(inv_mass_mat, p))
@@ -25,7 +26,8 @@ def blackbox_hamiltonian_fn(q, p, n_dof, shape, activation, epsilon):
                       activation=activation,
                       name="hamiltonian")
 
-    state = jnp.concatenate([q, p], axis=-1)
+    z = jnp.concatenate([jnp.cos(q), jnp.sin(q)], axis=-1)
+    state = jnp.concatenate([z, p], axis=-1)
     return net(state).squeeze()
 
 
@@ -68,10 +70,9 @@ def dynamics_model(params, key, q, p, pd, tau, hamiltonian):
     return qd_pred, pd_pred, tau_pred, H, dHdt
 
 
-def forward_model(params, key, q, p, pd, hamiltonian):
+def forward_model(params, key, q, p, tau, hamiltonian):
     argnums = [2, 3]
     vmap_dim = (None, None, 0, 0)
-    batch_matmul = jax.vmap(jnp.matmul, (0, 0))
 
     # Compute Lagrangian and Jacobians:
     hamiltonian_value_and_grad = jax.value_and_grad(hamiltonian, argnums=argnums)
@@ -87,7 +88,6 @@ def forward_model(params, key, q, p, pd, hamiltonian):
 def inverse_model(params, key, q, p, pd, hamiltonian):
     argnums = [2, 3]
     vmap_dim = (None, None, 0, 0)
-    batch_matmul = jax.vmap(jnp.matmul, (0, 0))
 
     # Compute Lagrangian and Jacobians:
     hamiltonian_value_and_grad = jax.value_and_grad(hamiltonian, argnums=argnums)
@@ -133,3 +133,21 @@ def forward_loss_fn(params, q, qd, p, pd, tau, hamiltonian):
     }
 
     return loss, logs
+
+
+def rollout(params, key, q0, qd0, p0, tau, hamiltonian, forward_model, integrator, dt):
+
+    def step(x, u):
+        q, p = x
+        q_n, p_n = integrator(params, key, q, p, u, forward_model, dt)
+        (qd_n,) = jax.grad(hamiltonian, argnums=[3,])(params, key, q_n[0], p_n[0])
+        return (q_n, p_n), (q_n, qd_n[jnp.newaxis], p_n)
+
+    _, (q, qd, p) = jax.lax.scan(step, (q0, p0), tau[:-1])
+
+    # Append initial value to trajectory
+    q, qd, p = jax.tree_map(
+        lambda x0, x: jnp.concatenate([x0, x[:, 0]], axis=0),
+        (q0, qd0, p0), (q, qd, p))
+
+    return q, qd, p

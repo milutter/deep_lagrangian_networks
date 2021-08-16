@@ -30,8 +30,18 @@ def mass_matrix_fn(q, n_dof, shape, activation, epsilon):
         name="mass_matrix"
     )
 
-    l_diagonal, l_off_diagonal = jnp.split(net(q), [n_dof,], axis=-1)
-    l_diagonal = jax.nn.softplus(l_diagonal) + epsilon
+    # Apply feature transform:
+    z = jnp.concatenate([jnp.cos(q), jnp.sin(q)], axis=-1)
+    l_diagonal, l_off_diagonal = jnp.split(net(z), [n_dof,], axis=-1)
+
+    # Ensure positive diagonal:
+    # l_diagonal = jax.nn.softplus(l_diagonal) + epsilon
+
+    diag_0 = 1.0
+    diag_min, diag_max = -2., (diag_0 - epsilon)
+    l_diagonal = diag_max - jax.nn.softplus(diag_max - l_diagonal)
+    l_diagonal = diag_min + jax.nn.softplus(l_diagonal - diag_min)
+    l_diagonal = diag_0 - l_diagonal
 
     vec_lower_triangular = jnp.concatenate((l_diagonal, l_off_diagonal), axis=-1)[..., idx]
 
@@ -52,7 +62,9 @@ def potential_energy_fn(q, shape, activation):
                       activation=activation,
                       name="potential_energy")
 
-    return net(q)
+    # Apply feature transform
+    z = jnp.concatenate([jnp.cos(q), jnp.sin(q)], axis=-1)
+    return net(z)
 
 
 def structured_lagrangian_fn(q, qd, n_dof, shape, activation, epsilon):
@@ -67,7 +79,9 @@ def blackbox_lagrangian_fn(q, qd, n_dof, shape, activation, epsilon):
                       activation=activation,
                       name="lagrangian")
 
-    state = jnp.concatenate([q, qd], axis=-1)
+    # Apply feature transform
+    z = jnp.concatenate([jnp.cos(q), jnp.sin(q)], axis=-1)
+    state = jnp.concatenate([z, qd], axis=-1)
     return net(state).squeeze()
 
 
@@ -131,8 +145,8 @@ def forward_model(params, key, q, qd, tau, lagrangian):
     (_, (d2L_dqddq, d2Ld2qd)) = jax.vmap(lagrangian_hessian, vmap_dim)(params, key, q, qd)
 
     # Compute the forward model:
-    qdd_pred = batch_matmul(batch_inverse(d2L_dqddq), (tau - batch_matmul(d2L_dqddq, qd) + dLdq))
-    return qdd_pred
+    qdd_pred = batch_matmul(batch_inverse(d2Ld2qd), (tau - batch_matmul(d2L_dqddq, qd) + dLdq))
+    return qd, qdd_pred
 
 
 def inverse_model(params, key, q, qd, qdd, lagrangian):
@@ -185,3 +199,21 @@ def inverse_loss_fn(params, q, qd, qdd, tau, lagrangian):
         'energy_var': var_energy_error,
     }
     return loss, logs
+
+
+def rollout(params, key, q0, qd0, p0, tau, lagrangian, forward_model, integrator, dt):
+
+    def step(x, u):
+        q, qd = x
+        q_n, qd_n = integrator(params, key, q, qd, u, forward_model, dt)
+        (p_n,) = jax.grad(lagrangian, argnums=[3,])(params, key, q_n[0], qd_n[0])
+        return (q_n, qd_n), (q_n, qd_n, p_n[jnp.newaxis])
+
+    _, (q, qd, p) = jax.lax.scan(step, (q0, qd0), tau[:-1])
+
+    # Append initial value to trajectory
+    q, qd, p = jax.tree_map(
+        lambda x0, x: jnp.concatenate([x0, x[:, 0]], axis=0),
+        (q0, qd0, p0), (q, qd, p))
+
+    return q, qd, p

@@ -1,7 +1,5 @@
 import argparse
-import sys
 import optax
-import torch
 import numpy as np
 import time
 import jax
@@ -15,16 +13,17 @@ try:
     mp.rc('text', usetex=True)
     mp.rcParams['text.latex.preamble'] = [r"\usepackage{amsmath}"]
 
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+
 except ImportError:
     pass
-
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 
 import deep_lagrangian_networks.jax_HNN_model as hnn
 from deep_lagrangian_networks.replay_memory import ReplayMemory
 from deep_lagrangian_networks.utils import load_dataset, init_env
 import deep_lagrangian_networks.jax_utils as jax_utils
+from deep_lagrangian_networks.jax_utils import activations
 
 if __name__ == "__main__":
 
@@ -33,7 +32,7 @@ if __name__ == "__main__":
     parser.add_argument("-c", nargs=1, type=int, required=False, default=[True, ], help="Training using CUDA.")
     parser.add_argument("-i", nargs=1, type=int, required=False, default=[0, ], help="Set the CUDA id.")
     parser.add_argument("-s", nargs=1, type=int, required=False, default=[42, ], help="Set the random seed")
-    parser.add_argument("-r", nargs=1, type=int, required=False, default=[1, ], help="Render the figure")
+    parser.add_argument("-r", nargs=1, type=int, required=False, default=[0, ], help="Render the figure")
     parser.add_argument("-l", nargs=1, type=int, required=False, default=[0, ], help="Load the DeLaN model")
     parser.add_argument("-m", nargs=1, type=int, required=False, default=[1, ], help="Save the DeLaN model")
     seed, cuda, render, load_model, save_model = init_env(parser.parse_args())
@@ -44,11 +43,11 @@ if __name__ == "__main__":
     hyper = {'n_width': 64,
              'n_depth': 2,
              'n_minibatch': 512,
-             'diagonal_epsilon': 0.01,
-             'activation': jax.nn.softplus,
-             'learning_rate': 5.e-04,
+             'diagonal_epsilon': 0.2,
+             'activation': 'tanh',
+             'learning_rate': 1.e-04,
              'weight_decay': 1.e-5,
-             'max_epoch': 10000,
+             'max_epoch': 3000,
              'hamiltonian_type': hnn.structured_hamiltonian_fn,
              # 'hamiltonian_type': hnn.blackbox_hamiltonian_fn,
              }
@@ -60,7 +59,7 @@ if __name__ == "__main__":
 
     # Read the dataset:
     n_dof = 2
-    train_data, test_data, divider = load_dataset()
+    train_data, test_data, divider, dt = load_dataset()
     train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
     test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
 
@@ -101,7 +100,7 @@ if __name__ == "__main__":
         hyper['hamiltonian_type'],
         n_dof=n_dof,
         shape=(hyper['n_width'],) * hyper['n_depth'],
-        activation=hyper['activation'],
+        activation=activations[hyper['activation']],
         epsilon=hyper['diagonal_epsilon'],
     ))
 
@@ -217,7 +216,7 @@ if __name__ == "__main__":
             hnn.inv_mass_matrix_fn,
             n_dof=n_dof,
             shape=(hyper['n_width'],) * hyper['n_depth'],
-            activation=hyper['activation'],
+            activation=activations[hyper['activation']],
             epsilon=hyper['diagonal_epsilon'])
 
         params_mass_matrix, params_potential_energy = jax_utils.get_params(params, "mass_matrix")
