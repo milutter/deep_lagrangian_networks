@@ -3,12 +3,16 @@ import torch
 import numpy as np
 import time
 
+import PyQt5
+
 import matplotlib as mp
+
 
 try:
     mp.use("Qt5Agg")
     mp.rc('text', usetex=True)
-    mp.rcParams['text.latex.preamble'] = [r"\usepackage{amsmath}"]
+    #mp.rcParams['text.latex.preamble'] = [r"\usepackage{amsmath}"]
+    mp.rcParams['text.latex.preamble'] = r"\usepackage{bm} \usepackage{amsmath}"
 
 except ImportError:
     pass
@@ -35,9 +39,9 @@ if __name__ == "__main__":
 
     # Read the dataset:
     n_dof = 2
-    train_data, test_data, divider = load_dataset()
-    train_labels, train_qp, train_qv, train_qa, train_tau = train_data
-    test_labels, test_qp, test_qv, test_qa, test_tau, test_m, test_c, test_g = test_data
+    train_data, test_data, divider, _ = load_dataset()
+    train_labels, train_qp, train_qv, train_qa, train_tau, _, _ = train_data
+    test_labels, test_qp, test_qv, test_qa, test_tau, test_m, test_c, test_g, _, _ = test_data
 
     print("\n\n################################################")
     print("Characters:")
@@ -244,7 +248,8 @@ if __name__ == "__main__":
 
     fig = plt.figure(figsize=(24.0/1.54, 8.0/1.54), dpi=100)
     fig.subplots_adjust(left=0.08, bottom=0.12, right=0.98, top=0.95, wspace=0.3, hspace=0.2)
-    fig.canvas.set_window_title('Seed = {0}'.format(seed))
+    #fig.canvas.set_window_title('Seed = {0}'.format(seed))
+    fig.canvas.manager.set_window_title('Seed = {0}'.format(seed))
 
     legend = [mp.patches.Patch(color=color_i[0], label="DeLaN"),
               mp.patches.Patch(color="k", label="Ground Truth")]
