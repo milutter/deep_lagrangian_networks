@@ -118,7 +118,9 @@ if __name__ == "__main__":
             l_var_inv_dyn = torch.var(err_inv)
 
             # Compute the loss of the Power Conservation:
-            dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau.view(-1, 2, 1)).view(-1)
+            dEdt = torch.matmul(qd.view(-1, n_dof, 1).transpose(dim0=1, dim1=2), tau.view(-1, n_dof, 1)).view(-1)
+                # previous version
+                # dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau.view(-1, 2, 1)).view(-1)
             err_dEdt = (dEdt_hat - dEdt) ** 2
             l_mean_dEdt = torch.mean(err_dEdt)
             l_var_dEdt = torch.var(err_dEdt)
