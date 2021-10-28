@@ -4,7 +4,7 @@ import haiku as hk
 import numpy as np
 
 
-def mass_matrix_fn(q, n_dof, shape, activation, epsilon):
+def mass_matrix_fn(q, n_dof, shape, activation, epsilon, shift):
     assert n_dof > 0
     n_output = int((n_dof ** 2 + n_dof) / 2)
 
@@ -36,12 +36,7 @@ def mass_matrix_fn(q, n_dof, shape, activation, epsilon):
 
     # Ensure positive diagonal:
     # l_diagonal = jax.nn.softplus(l_diagonal) + epsilon
-
-    diag_0 = 1.0
-    diag_min, diag_max = -2., (diag_0 - epsilon)
-    l_diagonal = diag_max - jax.nn.softplus(diag_max - l_diagonal)
-    l_diagonal = diag_min + jax.nn.softplus(l_diagonal - diag_min)
-    l_diagonal = diag_0 - l_diagonal
+    l_diagonal = jax.nn.softplus(l_diagonal + shift) + epsilon
 
     vec_lower_triangular = jnp.concatenate((l_diagonal, l_off_diagonal), axis=-1)[..., idx]
 
@@ -52,8 +47,8 @@ def mass_matrix_fn(q, n_dof, shape, activation, epsilon):
     return mass_mat
 
 
-def kinetic_energy_fn(q, qd, n_dof, shape, activation, epsilon):
-    mass_mat = mass_matrix_fn(q, n_dof, shape, activation, epsilon)
+def kinetic_energy_fn(q, qd, n_dof, shape, activation, epsilon, shift):
+    mass_mat = mass_matrix_fn(q, n_dof, shape, activation, epsilon, shift)
     return 1. / 2. * jnp.dot(qd, jnp.dot(mass_mat, qd))
 
 
@@ -67,13 +62,13 @@ def potential_energy_fn(q, shape, activation):
     return net(z)
 
 
-def structured_lagrangian_fn(q, qd, n_dof, shape, activation, epsilon):
-    e_kin = kinetic_energy_fn(q, qd, n_dof, shape, activation, epsilon)
+def structured_lagrangian_fn(q, qd, n_dof, shape, activation, epsilon, shift):
+    e_kin = kinetic_energy_fn(q, qd, n_dof, shape, activation, epsilon, shift)
     e_pot = potential_energy_fn(q, shape, activation).squeeze()
     return e_kin - e_pot
 
 
-def blackbox_lagrangian_fn(q, qd, n_dof, shape, activation, epsilon):
+def blackbox_lagrangian_fn(q, qd, n_dof, shape, activation, epsilon, shift):
     del epsilon, n_dof
     net = hk.nets.MLP(output_sizes= shape + (1,),
                       activation=activation,
@@ -104,7 +99,7 @@ def euler_lagrange_equation(params, key, q, qd, qdd, lagrangian):
     return tau_pred
 
 
-def dynamics_model(params, key, q, qd, qdd, tau, lagrangian):
+def dynamics_model(params, key, q, qd, qdd, tau, lagrangian, n_dof):
     argnums = [2, 3]
     vmap_dim = (None, None, 0, 0)
     batch_matmul = jax.vmap(jnp.matmul, (0, 0))
@@ -122,7 +117,7 @@ def dynamics_model(params, key, q, qd, qdd, tau, lagrangian):
     tau_pred = batch_matmul(d2Ld2qd, qdd) + batch_matmul(d2L_dqddq, qd) - dLdq
 
     # Compute the forward model:
-    qdd_pred = batch_matmul(batch_inverse(d2Ld2qd), (tau - batch_matmul(d2L_dqddq, qd) + dLdq))
+    qdd_pred = batch_matmul(batch_inverse(d2Ld2qd + 1.e-4 * jnp.eye(n_dof)), (tau - batch_matmul(d2L_dqddq, qd) + dLdq))
 
     # Compute Hamiltonian & dH/dt:
     H = jax.vmap(jnp.dot, [0, 0])(dLdqd, qd) - L
@@ -130,7 +125,7 @@ def dynamics_model(params, key, q, qd, qdd, tau, lagrangian):
     return qdd_pred, tau_pred, H, dHdt
 
 
-def forward_model(params, key, q, qd, tau, lagrangian):
+def forward_model(params, key, q, qd, tau, lagrangian, n_dof):
     argnums = [2, 3]
     vmap_dim = (None, None, 0, 0)
     batch_matmul = jax.vmap(jnp.matmul, (0, 0))
@@ -145,7 +140,7 @@ def forward_model(params, key, q, qd, tau, lagrangian):
     (_, (d2L_dqddq, d2Ld2qd)) = jax.vmap(lagrangian_hessian, vmap_dim)(params, key, q, qd)
 
     # Compute the forward model:
-    qdd_pred = batch_matmul(batch_inverse(d2Ld2qd), (tau - batch_matmul(d2L_dqddq, qd) + dLdq))
+    qdd_pred = batch_matmul(batch_inverse(d2Ld2qd + 1.e-4 * jnp.eye(n_dof)), (tau - batch_matmul(d2L_dqddq, qd) + dLdq))
     return qd, qdd_pred
 
 
@@ -167,16 +162,16 @@ def inverse_model(params, key, q, qd, qdd, lagrangian):
     return tau_pred
 
 
-def inverse_loss_fn(params, q, qd, qdd, tau, lagrangian):
-    qdd_pred, tau_pred, H_pred, dHdt_pred = dynamics_model(params, None, q, qd, qdd, tau, lagrangian)
+def inverse_loss_fn(params, q, qd, qdd, tau, lagrangian, n_dof, norm_tau, norm_qdd):
+    qdd_pred, tau_pred, H_pred, dHdt_pred = dynamics_model(params, None, q, qd, qdd, tau, lagrangian, n_dof)
 
     # Forward Error
-    qdd_error = jnp.sum((qdd - qdd_pred)**2, axis=-1)
+    qdd_error = jnp.sum((qdd - qdd_pred)**2 / norm_qdd, axis=-1)
     mean_forward_error = jnp.mean(qdd_error)
     var_forward_error = jnp.var(qdd_error)
 
     # Inverse Error:
-    tau_error = jnp.sum((tau - tau_pred)**2, axis=-1)
+    tau_error = jnp.sum((tau - tau_pred)**2 / norm_tau, axis=-1)
     mean_inverse_error = jnp.mean(tau_error)
     var_inverse_error = jnp.mean(tau_error)
 
@@ -202,18 +197,23 @@ def inverse_loss_fn(params, q, qd, qdd, tau, lagrangian):
 
 
 def rollout(params, key, q0, qd0, p0, tau, lagrangian, forward_model, integrator, dt):
+    L, (dLdqd,) = jax.value_and_grad(lagrangian, argnums=[3, ])(params, key, q0[0], qd0[0])
+    H0 = (jnp.dot(dLdqd, qd0[0]) - L)[jnp.newaxis]
 
     def step(x, u):
         q, qd = x
         q_n, qd_n = integrator(params, key, q, qd, u, forward_model, dt)
-        (p_n,) = jax.grad(lagrangian, argnums=[3,])(params, key, q_n[0], qd_n[0])
-        return (q_n, qd_n), (q_n, qd_n, p_n[jnp.newaxis])
+        L, (dLdqd,) = jax.value_and_grad(lagrangian, argnums=[3,])(params, key, q_n[0], qd_n[0])
 
-    _, (q, qd, p) = jax.lax.scan(step, (q0, qd0), tau[:-1])
+        p_n = dLdqd
+        H = jnp.dot(dLdqd, qd_n[0]) - L
+        return (q_n, qd_n), (q_n, qd_n, p_n[jnp.newaxis], H[jnp.newaxis])
+
+    _, (q, qd, p, H) = jax.lax.scan(step, (q0, qd0), tau[:-1])
 
     # Append initial value to trajectory
-    q, qd, p = jax.tree_map(
+    q, qd, p, H = jax.tree_map(
         lambda x0, x: jnp.concatenate([x0, x[:, 0]], axis=0),
-        (q0, qd0, p0), (q, qd, p))
+        (q0, qd0, p0, H0), (q, qd, p, H))
 
-    return q, qd, p
+    return q, qd, p, H

@@ -1,6 +1,9 @@
 import dill as pickle
 import numpy as np
 import torch
+import jax
+import jax.numpy as jnp
+import haiku as hk
 
 def init_env(args):
 
@@ -27,16 +30,12 @@ def init_env(args):
     return seed, cuda_flag, render, load_model, save_model
 
 
-def load_dataset(n_characters=3, filename="data/DeLaN_Data.pickle"):
+def load_dataset(n_characters=3, filename="data/character_data.pickle", test_label=("e", "q", "v")):
 
     with open(filename, 'rb') as f:
         data = pickle.load(f)
 
     n_dof = 2
-
-    dt = np.concatenate([t[1:] - t[:-1] for t in data["t"]])
-    dt_mean, dt_var = np.mean(dt), np.var(dt)
-    assert dt_var < 1.e-12
 
     # Split the dataset in train and test set:
 
@@ -44,8 +43,12 @@ def load_dataset(n_characters=3, filename="data/DeLaN_Data.pickle"):
     # test_idx = np.random.choice(len(data["labels"]), n_characters, replace=False)
 
     # Specified Test Set:
-    test_char = ["e", "q", "v"]
-    test_idx = [data["labels"].index(x) for x in test_char]
+    # test_char = ["e", "q", "v"]
+    test_idx = [data["labels"].index(x) for x in test_label]
+
+    dt = np.concatenate([data["t"][idx][1:] - data["t"][idx][:-1] for idx in test_idx])
+    dt_mean, dt_var = np.mean(dt), np.var(dt)
+    assert dt_var < 1.e-12
 
     train_labels, test_labels = [], []
     train_qp, train_qv, train_qa, train_tau = np.zeros((0, n_dof)), np.zeros((0, n_dof)), np.zeros((0, n_dof)), np.zeros((0, n_dof))
@@ -87,3 +90,15 @@ def load_dataset(n_characters=3, filename="data/DeLaN_Data.pickle"):
     return (train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau), \
            (test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g),\
            divider, dt_mean
+
+
+def parition_params(module_name, name, value, key):
+    return module_name.split("/")[0] == key
+
+def get_params(params, key):
+    return hk.data_structures.partition(jax.partial(parition_params, key=key), params)
+
+activations = {
+    'tanh': jnp.tanh,
+    'softplus': jax.nn.softplus,
+}

@@ -21,47 +21,84 @@ except ImportError:
 
 import deep_lagrangian_networks.jax_HNN_model as hnn
 from deep_lagrangian_networks.replay_memory import ReplayMemory
-from deep_lagrangian_networks.utils import load_dataset, init_env
-import deep_lagrangian_networks.jax_utils as jax_utils
-from deep_lagrangian_networks.jax_utils import activations
+from deep_lagrangian_networks.utils import load_dataset, init_env, activations, get_params
+
+import os
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.4'
 
 if __name__ == "__main__":
-
     # Read Command Line Arguments:
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", nargs=1, type=int, required=False, default=[True, ], help="Training using CUDA.")
     parser.add_argument("-i", nargs=1, type=int, required=False, default=[0, ], help="Set the CUDA id.")
-    parser.add_argument("-s", nargs=1, type=int, required=False, default=[42, ], help="Set the random seed")
-    parser.add_argument("-r", nargs=1, type=int, required=False, default=[0, ], help="Render the figure")
+    parser.add_argument("-s", nargs=1, type=int, required=False, default=[0, ], help="Set the random seed")
+    parser.add_argument("-r", nargs=1, type=int, required=False, default=[1, ], help="Render the figure")
     parser.add_argument("-l", nargs=1, type=int, required=False, default=[0, ], help="Load the DeLaN model")
     parser.add_argument("-m", nargs=1, type=int, required=False, default=[1, ], help="Save the DeLaN model")
+    parser.add_argument("-d", nargs=1, type=str, required=False, default=['uniform', ], help="Dataset")
+    parser.add_argument("-t", nargs=1, type=str, required=False, default=['structured', ], help="Hamiltonian Type")
     seed, cuda, render, load_model, save_model = init_env(parser.parse_args())
-
     rng_key = jax.random.PRNGKey(seed)
 
+    dataset = str(parser.parse_args().d[0])
+    model_id = str(parser.parse_args().t[0])
+
     # Construct Hyperparameters:
-    hyper = {'n_width': 64,
-             'n_depth': 2,
-             'n_minibatch': 512,
-             'diagonal_epsilon': 0.2,
-             'activation': 'tanh',
-             'learning_rate': 1.e-04,
-             'weight_decay': 1.e-5,
-             'max_epoch': 3000,
-             'hamiltonian_type': hnn.structured_hamiltonian_fn,
-             # 'hamiltonian_type': hnn.blackbox_hamiltonian_fn,
-             }
+    if model_id == "structured":
+        hamiltonian_type = hnn.structured_hamiltonian_fn
+
+    elif model_id == "black_box":
+        hamiltonian_type = hnn.blackbox_hamiltonian_fn
+
+    else:
+        raise ValueError
+
+    # Construct Hyperparameters:
+    hyper = {
+        'dataset': dataset,
+        'n_width': 64,
+        'n_depth': 2,
+        'n_minibatch': 512,
+        'diagonal_epsilon': 0.1,
+        'diagonal_shift': 0.0,
+        'activation': 'tanh',
+        'learning_rate': 1.e-04,
+        'weight_decay': 1.e-5,
+        'max_epoch': int(2.5 * 1e3) if dataset == "uniform" else int(5 * 1e3),
+        'hamiltonian_type': hamiltonian_type,
+        }
 
     model_id = "black_box"
     if hyper['hamiltonian_type'].__name__ == 'structured_hamiltonian_fn':
         model_id = "structured"
 
+    if load_model:
+        with open(f"data/hnn_models/hnn_{model_id}_{hyper['dataset']}_seed_{seed}.jax", 'rb') as f:
+            data = pickle.load(f)
+
+        hyper = data["hyper"]
+        params = data["params"]
+
+    else:
+        params = None
 
     # Read the dataset:
-    n_dof = 2
-    train_data, test_data, divider, dt = load_dataset()
+    if hyper['dataset'] == "char":
+        train_data, test_data, divider, dt = load_dataset(
+            filename="data/character_data.pickle",
+            test_label=["e", "q", "v"])
+
+    elif hyper['dataset'] == "uniform":
+        train_data, test_data, divider, dt = load_dataset(
+            filename="data/uniform_data.pickle",
+            test_label=["Test 0", "Test 1", "Test 2"])
+
+    else:
+        raise ValueError
+
     train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
     test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
+    n_dof = test_qp.shape[-1]
 
     # Generate Replay Memory:
     mem_dim = ((n_dof,), (n_dof,), (n_dof,), (n_dof,), (n_dof,))
@@ -79,22 +116,8 @@ if __name__ == "__main__":
     print("\n################################################")
     print("Training Hamiltonian Neural Networks (HNN):\n")
 
-    # Load existing model parameters:
+    # Construct HNN:
     t0 = time.perf_counter()
-
-    # Construct DeLaN:
-    q, qd, p, pd, tau = [jnp.array(x) for x in next(iter(mem))]
-    rng_key, init_key = jax.random.split(rng_key)
-
-    if load_model:
-        with open(f"data/hnn_{model_id}_model.jax", 'rb') as f:
-            data = pickle.load(f)
-
-        hyper = data["hyper"]
-        params = data["params"]
-
-    else:
-        params = None
 
     hamiltonian_fn = hk.transform(jax.partial(
         hyper['hamiltonian_type'],
@@ -102,7 +125,11 @@ if __name__ == "__main__":
         shape=(hyper['n_width'],) * hyper['n_depth'],
         activation=activations[hyper['activation']],
         epsilon=hyper['diagonal_epsilon'],
+        shift=hyper['diagonal_shift'],
     ))
+
+    q, qd, p, pd, tau = [jnp.array(x) for x in next(iter(mem))]
+    rng_key, init_key = jax.random.split(rng_key)
 
     # Initialize Parameters:
     if params is None:
@@ -111,7 +138,7 @@ if __name__ == "__main__":
     # Trace Model:
     hamiltonian = hamiltonian_fn.apply
     vmap_hamiltonian = jax.vmap(hamiltonian, [None, None, 0, 0])
-    hnn_model = jax.jit(jax.partial(hnn.dynamics_model, hamiltonian=hamiltonian))
+    hnn_model = jax.jit(jax.partial(hnn.dynamics_model, hamiltonian=hamiltonian, n_dof=n_dof))
     _ = hnn_model(params, None, q[:5], p[:5], pd[:5], tau[:5])
 
     t_build = time.perf_counter() - t0
@@ -126,9 +153,16 @@ if __name__ == "__main__":
     )
 
     opt_state = optimizer.init(params)
+    loss_fn = jax.partial(
+        hnn.forward_loss_fn,
+        hamiltonian=hamiltonian,
+        n_dof=n_dof,
+        norm_tau=jnp.var(train_tau, axis=0),
+        norm_qd=jnp.var(train_qv, axis=0),
+        norm_pd=jnp.var(train_pd, axis=0),
+    )
 
     def update_fn(params, opt_state, q, qd, p, pd, tau):
-        loss_fn = jax.partial(hnn.forward_loss_fn, hamiltonian=hamiltonian)
         (_, logs), grads = jax.value_and_grad(loss_fn, 0, has_aux=True)(params, q, qd, p, pd, tau)
 
         updates, opt_state = optimizer.update(grads, opt_state, params)
@@ -177,11 +211,13 @@ if __name__ == "__main__":
 
     # Save the Model:
     if save_model:
-        with open(f"data/hnn_{model_id}_model.jax", "wb") as file:
+        with open(f"data/hnn_models/hnn_{model_id}_{hyper['dataset']}_seed_{seed}.jax", "wb") as file:
             pickle.dump(
                 {"epoch": epoch_i,
                  "hyper": hyper,
-                 "params": params},
+                 "params": params,
+                 "seed": seed,
+                 },
                 file)
 
     print("\n################################################")
@@ -217,14 +253,14 @@ if __name__ == "__main__":
             n_dof=n_dof,
             shape=(hyper['n_width'],) * hyper['n_depth'],
             activation=activations[hyper['activation']],
-            epsilon=hyper['diagonal_epsilon'])
+            epsilon=hyper['diagonal_epsilon'],
+            shift=hyper['diagonal_shift'],)
 
-        params_mass_matrix, params_potential_energy = jax_utils.get_params(params, "mass_matrix")
+        params_mass_matrix, params_potential_energy = get_params(params, "mass_matrix")
         vmap_mass_matrix_fn = jax.vmap(hk.transform(mass_matrix_fn).apply, [None, None, 0])
         pred_inv_mass_mat = vmap_mass_matrix_fn(params_mass_matrix, None, q)
         pred_mass_mat = jax.vmap(jnp.linalg.inv, (0,))(pred_inv_mass_mat)
-
-        np.testing.assert_allclose(mass_mat, pred_mass_mat, atol=1.e-6)
+        # np.testing.assert_allclose(mass_mat, pred_mass_mat, atol=1.e-6)
 
     # Compute the torque decomposition:
     hnn_g = hnn_model(params, None, q, zeros, zeros, zeros)[2]
@@ -280,7 +316,7 @@ if __name__ == "__main__":
     fig.subplots_adjust(left=0.08, bottom=0.12, right=0.98, top=0.95, wspace=0.3, hspace=0.2)
     fig.canvas.set_window_title('Seed = {0}'.format(seed))
 
-    legend = [mp.patches.Patch(color=color_i[0], label="DeLaN"),
+    legend = [mp.patches.Patch(color=color_i[0], label="HNN"),
               mp.patches.Patch(color="k", label="Ground Truth")]
 
     # Plot Torque
@@ -407,8 +443,8 @@ if __name__ == "__main__":
     ax0.plot(hnn_g[:, 0], color=color_i[0], alpha=plot_alpha)
     ax1.plot(hnn_g[:, 1], color=color_i[0], alpha=plot_alpha)
 
-    fig.savefig(f"figures/jax_HNN_{model_id}_Performance.pdf", format="pdf")
-    fig.savefig(f"figures/jax_HNN_{model_id}_Performance.png", format="png")
+    fig.savefig(f"figures/jax_HNN_{model_id}_{hyper['dataset']}_Performance.pdf", format="pdf")
+    fig.savefig(f"figures/jax_HNN_{model_id}_{hyper['dataset']}_Performance.png", format="png")
 
     if render:
         plt.show()

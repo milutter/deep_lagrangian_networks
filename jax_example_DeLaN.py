@@ -24,9 +24,10 @@ except:
 
 import deep_lagrangian_networks.jax_DeLaN_model as delan
 from deep_lagrangian_networks.replay_memory import ReplayMemory
-from deep_lagrangian_networks.utils import load_dataset, init_env
-from deep_lagrangian_networks.jax_utils import activations
+from deep_lagrangian_networks.utils import load_dataset, init_env, activations
 
+import os
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.4'
 
 if __name__ == "__main__":
 
@@ -34,36 +35,73 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", nargs=1, type=int, required=False, default=[True, ], help="Training using CUDA.")
     parser.add_argument("-i", nargs=1, type=int, required=False, default=[0, ], help="Set the CUDA id.")
-    parser.add_argument("-s", nargs=1, type=int, required=False, default=[42, ], help="Set the random seed")
-    parser.add_argument("-r", nargs=1, type=int, required=False, default=[0, ], help="Render the figure")
+    parser.add_argument("-s", nargs=1, type=int, required=False, default=[4, ], help="Set the random seed")
+    parser.add_argument("-r", nargs=1, type=int, required=False, default=[1, ], help="Render the figure")
     parser.add_argument("-l", nargs=1, type=int, required=False, default=[0, ], help="Load the DeLaN model")
     parser.add_argument("-m", nargs=1, type=int, required=False, default=[1, ], help="Save the DeLaN model")
+    parser.add_argument("-d", nargs=1, type=str, required=False, default=['char', ], help="Dataset")
+    parser.add_argument("-t", nargs=1, type=str, required=False, default=['structured', ], help="Lagrangian Type")
     seed, cuda, render, load_model, save_model = init_env(parser.parse_args())
-
     rng_key = jax.random.PRNGKey(seed)
 
+    dataset = str(parser.parse_args().d[0])
+    model_id = str(parser.parse_args().t[0])
+
     # Construct Hyperparameters:
-    hyper = {'n_width': 64,
-             'n_depth': 2,
-             'n_minibatch': 512,
-             'diagonal_epsilon': 0.2,
-             'activation': 'tanh',
-             'learning_rate': 5.e-04,
-             'weight_decay': 1.e-5,
-             'max_epoch': 3000,
-             'lagrangian_type': delan.structured_lagrangian_fn,
-             # 'lagrangian_type': delan.blackbox_lagrangian_fn,
-             }
+    if model_id == "structured":
+        lagrangian_type = delan.structured_lagrangian_fn
+
+    elif model_id == "black_box":
+        lagrangian_type = delan.blackbox_lagrangian_fn
+
+    else:
+        raise ValueError
+
+    hyper = {
+        'dataset': dataset,
+        'n_width': 64,
+        'n_depth': 2,
+        'n_minibatch': 512,
+        'diagonal_epsilon': 0.1,
+        'diagonal_shift': 2.0,
+        'activation': 'tanh',
+        'learning_rate': 1.e-04,
+        'weight_decay': 1.e-5,
+        'max_epoch': int(2.5 * 1e3) if dataset == "uniform" else int(5 * 1e3),
+        'lagrangian_type': lagrangian_type,
+        }
 
     model_id = "black_box"
     if hyper['lagrangian_type'].__name__ == 'structured_lagrangian_fn':
         model_id = "structured"
 
+    if load_model:
+        with open(f"data/delan_models/delan_{model_id}_{hyper['dataset']}_seed_{seed}.jax", 'rb') as f:
+            data = pickle.load(f)
+
+        hyper = data["hyper"]
+        params = data["params"]
+
+    else:
+        params = None
+
     # Read the dataset:
-    n_dof = 2
-    train_data, test_data, divider, dt = load_dataset()
+    if hyper['dataset'] == "char":
+        train_data, test_data, divider, dt = load_dataset(
+            filename="data/character_data.pickle",
+            test_label=["e", "q", "v"])
+
+    elif hyper['dataset'] == "uniform":
+        train_data, test_data, divider, dt = load_dataset(
+            filename="data/uniform_data.pickle",
+            test_label=["Test 0", "Test 1", "Test 2"])
+
+    else:
+        raise ValueError
+
     train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
     test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
+    n_dof = test_qp.shape[-1]
 
     # Generate Replay Memory:
     mem_dim = ((n_dof,), (n_dof,), (n_dof,), (n_dof,))
@@ -81,22 +119,8 @@ if __name__ == "__main__":
     print("\n################################################")
     print("Training Deep Lagrangian Networks (DeLaN):\n")
 
-    # Load existing model parameters:
-    t0 = time.perf_counter()
-
     # Construct DeLaN:
-    q, qd, qdd, tau = [jnp.array(x) for x in next(iter(mem))]
-    rng_key, init_key = jax.random.split(rng_key)
-
-    if load_model:
-        with open(f"data/delan_{model_id}_model.jax", 'rb') as f:
-            data = pickle.load(f)
-
-        hyper = data["hyper"]
-        params = data["params"]
-
-    else:
-        params = None
+    t0 = time.perf_counter()
 
     lagrangian_fn = hk.transform(jax.partial(
         hyper['lagrangian_type'],
@@ -104,7 +128,11 @@ if __name__ == "__main__":
         shape=(hyper['n_width'],) * hyper['n_depth'],
         activation=activations[hyper['activation']],
         epsilon=hyper['diagonal_epsilon'],
+        shift=hyper['diagonal_shift'],
     ))
+
+    q, qd, qdd, tau = [jnp.array(x) for x in next(iter(mem))]
+    rng_key, init_key = jax.random.split(rng_key)
 
     # Initialize Parameters:
     if params is None:
@@ -112,7 +140,7 @@ if __name__ == "__main__":
 
     # Trace Model:
     lagrangian = lagrangian_fn.apply
-    delan_model = jax.jit(jax.partial(delan.dynamics_model, lagrangian=lagrangian))
+    delan_model = jax.jit(jax.partial(delan.dynamics_model, lagrangian=lagrangian, n_dof=n_dof))
     _ = delan_model(params, None, q[:1], qd[:1], qdd[:1], tau[:1])
     t_build = time.perf_counter() - t0
     print(f"DeLaN Build Time     = {t_build:.2f}s")
@@ -126,9 +154,16 @@ if __name__ == "__main__":
     )
 
     opt_state = optimizer.init(params)
+    loss_fn = jax.partial(
+        delan.inverse_loss_fn,
+        lagrangian=lagrangian,
+        n_dof=n_dof,
+        norm_tau=jnp.var(train_tau, axis=0),
+        norm_qdd=jnp.var(train_qa, axis=0),
+    )
 
     def update_fn(params, opt_state, q, qd, qdd, tau):
-        loss_fn = jax.partial(delan.inverse_loss_fn, lagrangian=lagrangian)
+
         (_, logs), grads = jax.value_and_grad(loss_fn, 0, has_aux=True)(params, q, qd, qdd, tau)
 
         updates, opt_state = optimizer.update(grads, opt_state, params)
@@ -175,11 +210,12 @@ if __name__ == "__main__":
 
     # Save the Model:
     if save_model:
-        with open(f"data/delan_{model_id}_model.jax", "wb") as file:
+        with open(f"data/delan_models/delan_{model_id}_{hyper['dataset']}_seed_{seed}.jax", "wb") as file:
             pickle.dump(
                 {"epoch": epoch_i,
                  "hyper": hyper,
-                 "params": params},
+                 "params": params,
+                 "seed": seed},
                 file)
 
     print("\n################################################")
@@ -369,8 +405,8 @@ if __name__ == "__main__":
     ax0.plot(delan_g[:, 0], color=color_i[0], alpha=plot_alpha)
     ax1.plot(delan_g[:, 1], color=color_i[0], alpha=plot_alpha)
 
-    fig.savefig(f"figures/jax_DeLaN_{model_id}_Performance.pdf", format="pdf")
-    fig.savefig(f"figures/jax_DeLaN_{model_id}_Performance.png", format="png")
+    fig.savefig(f"figures/jax_DeLaN_{model_id}_{hyper['dataset']}_Performance.pdf", format="pdf")
+    fig.savefig(f"figures/jax_DeLaN_{model_id}_{hyper['dataset']}_Performance.png", format="png")
 
     if render:
         plt.show()

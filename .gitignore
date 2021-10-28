@@ -95,4 +95,5 @@ ENV/
 
 # Pycharm project files:
 .idea/
-/.project
+.project
+private/

@@ -1,10 +1,15 @@
 # Deep Lagrangian Networks
-The open-source implementation of Deep Lagrangian Networks presented in 
-- [Lutter et. al., (2019). Deep Lagrangian Networks: Using Physics as Model Prior for Deep Learning, \
+The open-source implementation of Deep Lagrangian Networks presented in
+- [Lutter and Peters, (2021). Combining Physics and Deep Learning to learn Continuous-Time Dynamics Models, 
+arXiv preprint arXiv:2110.01894](https://arxiv.org/abs/2110.01894).
+ 
+- [Lutter et. al., (2019). Deep Lagrangian Networks: Using Physics as Model Prior for Deep Learning, 
 International Conference on Learning Representations (ICLR)](https://arxiv.org/abs/1907.04490).
 
-- [Lutter et. al., (2019). Deep Lagrangian Networks for end-to-end learning of energy-based control for under-actuated systems,\
+- [Lutter et. al., (2019). Deep Lagrangian Networks for end-to-end learning of energy-based control for under-actuated systems,
  International Conference on Intelligent Robots & Systems (IROS)](https://arxiv.org/abs/1907.04489).
+
+
 
 **Abstract:** \
 Models describing the dynamics of the robot and its environment are essential to achieve precise control as well as 
@@ -73,6 +78,14 @@ If you use this implementation within your paper, please cite:
   title =       "Deep Lagrangian Networks for end-to-end learning of energy-based control for under-actuated systems",
   booktitle =   "International Conference on Intelligent Robots & Systems (IROS)",
 }
+
+@article{lutter2021combining,
+  author =      "Lutter, M. abd Peters, P.",
+  year =        "2021",
+  title =       "Combining Physics and Deep Learning to learn Continuous-Time Dynamics Models",
+  journal =     "arXiv preprint arXiv:2110.01894"
+}
+
 ```
 
 **Contact:** \

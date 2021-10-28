@@ -179,7 +179,7 @@ if __name__ == "__main__":
     # Move model to the CPU:
     delan_model.cpu()
 
-    # Compute the joint torque using single samples on the CPU. The evaluation is done using only single samples to
+    # Compute the joint torque using single samples on the CPU. The results is done using only single samples to
     # imitate the online control-loop. These online computation are performed on the CPU as this is faster for single
     # samples.
 

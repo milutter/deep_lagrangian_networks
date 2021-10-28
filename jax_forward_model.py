@@ -23,9 +23,9 @@ except ImportError:
 
 import deep_lagrangian_networks.jax_HNN_model as hnn
 import deep_lagrangian_networks.jax_DeLaN_model as delan
-from deep_lagrangian_networks.utils import load_dataset, init_env
+import deep_lagrangian_networks.jax_Black_Box_model as black_box
+from deep_lagrangian_networks.utils import load_dataset, init_env, activations
 from deep_lagrangian_networks.jax_integrator import symplectic_euler, explicit_euler, runge_kutta_4
-from deep_lagrangian_networks.jax_utils import activations
 
 if __name__ == "__main__":
 
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", nargs=1, type=int, required=False, default=[True, ], help="Training using CUDA.")
     parser.add_argument("-i", nargs=1, type=int, required=False, default=[0, ], help="Set the CUDA id.")
-    parser.add_argument("-s", nargs=1, type=int, required=False, default=[42, ], help="Set the random seed")
+    parser.add_argument("-s", nargs=1, type=int, required=False, default=[1, ], help="Set the random seed")
     parser.add_argument("-r", nargs=1, type=int, required=False, default=[1, ], help="Render the figure")
     parser.add_argument("-l", nargs=1, type=int, required=False, default=[0, ], help="Load the DeLaN model")
     parser.add_argument("-m", nargs=1, type=int, required=False, default=[1, ], help="Save the DeLaN model")
@@ -41,11 +41,15 @@ if __name__ == "__main__":
 
     rng_key = jax.random.PRNGKey(seed)
 
+    time_scaling = 20
+    dataset = "uniform"
+    integrator_fn = runge_kutta_4
+
     module = delan
     key = "lagrangian"
     module_key = "DeLaN"
-    model_type = delan.structured_lagrangian_fn
-    # model_type = delan.blackbox_lagrangian_fn
+    # model_type = delan.structured_lagrangian_fn
+    model_type = delan.blackbox_lagrangian_fn
 
     # module = hnn
     # key = "hamiltonian"
@@ -53,22 +57,38 @@ if __name__ == "__main__":
     # model_type = hnn.structured_hamiltonian_fn
     # model_type = hnn.blackbox_hamiltonian_fn
 
-    integrator_fn = symplectic_euler
+    # module = black_box
+    # key = "black_box_model"
+    # module_key = "Network"
+    # model_type = black_box.dynamics_network
 
     model_id = "black_box"
     if model_type.__name__.split("_")[0] == 'structured':
         model_id = "structured"
 
     # Read the dataset:
-    n_dof = 2
-    train_data, test_data, divider, dt = load_dataset()
+    if dataset == "char":
+        train_data, test_data, divider, dt = load_dataset(
+            filename="data/character_data.pickle",
+            test_label=["e", "q", "v"])
+
+    elif dataset == "uniform":
+        train_data, test_data, divider, dt = load_dataset(
+            filename="data/uniform_data.pickle",
+            test_label=["Test 0", "Test 1", "Test 2"])
+
+    else:
+        raise ValueError
+
     train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
     test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
+    n_dof = test_qp.shape[-1]
 
     # Convert NumPy samples to torch:
     q, qd, qdd, tau = jnp.array(test_qp), jnp.array(test_qv), jnp.array(test_qa), jnp.array(test_tau)
     p, pd = jnp.array(test_p), jnp.array(test_pd)
     dHdt = jax.vmap(jnp.dot, [0, 0])(qd, tau)
+    H = dt * jnp.cumsum(dHdt)
 
     print("\n\n################################################")
     print("Characters:")
@@ -88,7 +108,7 @@ if __name__ == "__main__":
     # Construct Model:
     rng_key, init_key = jax.random.split(rng_key)
 
-    with open(f"data/{module_key.lower()}_{model_id}_model.jax", 'rb') as f:
+    with open(f"data/{module_key.lower()}_models/{module_key.lower()}_{model_id}_{dataset}_seed_{seed}.jax", 'rb') as f:
         data = pickle.load(f)
 
     hyper = data["hyper"]
@@ -100,6 +120,7 @@ if __name__ == "__main__":
         shape=(hyper['n_width'],) * hyper['n_depth'],
         activation=activations[hyper['activation']],
         epsilon=hyper['diagonal_epsilon'],
+        shift=hyper['diagonal_shift'],
     ))
 
     # Initialize Parameters:
@@ -108,7 +129,7 @@ if __name__ == "__main__":
 
     # Trace Model:
     dynamics_fn = dynamics_fn.apply
-    forward_model = jax.jit(jax.partial(module.forward_model, **{key:dynamics_fn}))
+    forward_model = jax.jit(jax.partial(module.forward_model, **{key:dynamics_fn, 'n_dof': n_dof}))
     _ = forward_model(params, None, q[:1], qd[:1], tau[:1])
     t_build = time.perf_counter() - t0
     print(f"Model Build Time     = {t_build:.2f}s")
@@ -118,11 +139,12 @@ if __name__ == "__main__":
         **{key: dynamics_fn,
         "forward_model": forward_model,
         "integrator": integrator_fn,
-        "dt":dt}))
+        "dt": dt / time_scaling}))
 
     n_steps = np.array(divider[1:]) - np.array(divider[:-1])
     q_pred, qd_pred, p_pred = jnp.zeros((0, 2)), jnp.zeros((0, 2)), jnp.zeros((0, 2))
-    q_error, qd_error, p_error = jnp.zeros((0,)), jnp.zeros((0,)), jnp.zeros((0,))
+    # q_error, qd_error, p_error = jnp.zeros((0,)), jnp.zeros((0,)), jnp.zeros((0,))
+    H_pred = jnp.zeros((0,))
 
     for i, char in enumerate(test_labels):
         print(f"\nCharacter = {char} - # Steps = {n_steps[i]:03d}")
@@ -130,23 +152,25 @@ if __name__ == "__main__":
         u_i = tau[divider[i]:divider[i+1]]
 
         # Unroll Trajectory:
-        q_i_pred, qd_i_pred, p_i_pred = rollout(params, None, q_i[0:1], qd_i[0:1], p_i[0:1], u_i)
+        q_i_pred, qd_i_pred, p_i_pred, H_i_pred = rollout(
+            params, None, q_i[0:1], qd_i[0:1], p_i[0:1], jnp.repeat(u_i, int(time_scaling), axis=0))
 
-        # Compute Error:
-        (q_i_error, qd_i_error, p_i_error) = jax.tree_map(
-            lambda x_pred, x: jnp.sum((x - x_pred)**2, axis=-1),
-            (q_i_pred, qd_i_pred, p_i_pred),
-            (q_i, qd_i, p_i),
-        )
+        # Normalize Hamiltonian to start with H(0) = 0
+        H_i_pred = H_i_pred - H_i_pred[0]
 
         # Stack Predictions & Errors:
-        (q_pred, qd_pred, p_pred, q_error, qd_error, p_error) = jax.tree_map(
-            lambda x, xi: jnp.concatenate([x, xi], axis=0),
-            (q_pred, qd_pred, p_pred, q_error, qd_error, p_error),
-            (q_i_pred, qd_i_pred, p_i_pred, q_i_error, qd_i_error, p_i_error)
+        (q_pred, qd_pred, p_pred, H_pred) = jax.tree_map(
+            lambda x, xi: jnp.concatenate([x, xi[::int(time_scaling)]], axis=0),
+            (q_pred, qd_pred, p_pred, H_pred),
+            (q_i_pred, qd_i_pred, p_i_pred, H_i_pred)
         )
 
-    dHdt_pred = jax.vmap(jnp.dot, [0, 0])(qd_pred, tau)
+    # Compute Error:
+    (q_error, qd_error, p_error) = jax.tree_map(
+        lambda x_pred, x: jnp.sum((x - x_pred) ** 2, axis=-1),
+        (q_pred, qd_pred, p_pred),
+        (q, qd, p),
+    )
 
     print("\n################################################")
     print("Plotting Performance:")
@@ -308,16 +332,16 @@ if __name__ == "__main__":
 
     # Plot Gravity
     ax0 = fig.add_subplot(3, 4, 4)
-    ax0.set_title(r"Change of Energy $d\mathcal{H}/dt$")
-    ax0.set_ylabel("$d\mathcal{H}/dt$")
+    ax0.set_title(r"Normalized Energy $\mathcal{H}$")
+    ax0.set_ylabel("$\mathcal{H}$")
     # ax0.set_ylim(y_g_low[0], y_g_max[0])
     ax0.set_xticks(ticks)
     ax0.set_xticklabels(test_labels)
     [ax0.axvline(divider[i], linestyle='--', linewidth=1.0, alpha=1., color="k") for i in range(len(divider))]
     ax0.set_xlim(divider[0], divider[-1])
 
-    ax0.plot(dHdt[:], color="k")
-    ax0.plot(dHdt_pred[:], color=color_i[0], alpha=plot_alpha)
+    ax0.plot(H[:], color="k")
+    ax0.plot(H_pred[:], color=color_i[0], alpha=plot_alpha)
 
     ax2 = fig.add_subplot(3, 4, 12)
     ax2.text(s=r"\textbf{(d)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
