@@ -32,11 +32,11 @@ Figure 1: The network structure and loss of Deep Lagrangian Networks
 **Example:** \
 In this example, we apply Deep Lagrangian Networks to a simulated two degree of freedom robot. For training the robots
 executes different trajectories resembling characters and records the trajectory as well as motor torques. The recorded 
-trajectory data is then used to train Deep Lagrangian Netorks using Adam. Thereby, DeLaN learns the force decomposition 
+trajectory data is then used to train Deep Lagrangian Networks using Adam. Thereby, DeLaN learns the force decomposition 
 into inertial, Coriolis & centrifugal and gravitatonal forces unsupervised from the super-imposed torques. The force 
 decomposition for testing characters not part of the training set is shown in Figure 2. DeLaN learns the true underlying
 decomposition and achieves low mean squared error on the test data (Table 1). DeLaN is computationally efficient and 
-achieves one-step prediciton with an average frequency of 1500Hz. Therefore, DeLaN can be used in real-time control applications. 
+achieves one-step prediction with an average frequency of 1500Hz. Therefore, DeLaN can be used in real-time control applications. 
 ```
                 Torque MSE = 4.327e-04
               Inertial MSE = 7.338e-04
