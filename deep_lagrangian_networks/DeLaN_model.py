@@ -1,13 +1,18 @@
+import time
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+from tqdm import tqdm
+
+from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
+
 
 class LowTri:
 
     def __init__(self, m):
-
         # Calculate lower triangular matrix indices using numpy
         self._m = m
         self._idx = np.tril_indices(self._m)
@@ -105,7 +110,8 @@ class LagrangianLayer(nn.Module):
             self.g_prime = LinearDer()
 
         else:
-            raise ValueError("Activation Type must be in ['Linear', 'ReLu', 'SoftPlus', 'Cos'] but is {0}".format(self.activation))
+            raise ValueError(
+                "Activation Type must be in ['Linear', 'ReLu', 'SoftPlus', 'Cos'] but is {0}".format(self.activation))
 
     def forward(self, q, der_prev):
         # Apply Affine Transformation:
@@ -118,7 +124,15 @@ class LagrangianLayer(nn.Module):
 class DeepLagrangianNetwork(nn.Module):
 
     def __init__(self, n_dof, **kwargs):
+        """
+            -n_dof: number of Degrees Of Freedom
+            -kwargs: dictionay containing hyperparameters:
+                (n_minibatch, max_epoch, n_width, n_depth, diagonal_epsilon, activation, b_init, b_diag_init,
+                w_init, gain_hidden, gain_output)
+        """
         super(DeepLagrangianNetwork, self).__init__()
+
+        self.hyperparameters = kwargs
 
         # Read optional arguments:
         self.n_width = kwargs.get("n_width", 128)
@@ -131,6 +145,8 @@ class DeepLagrangianNetwork(nn.Module):
         self._g_output = kwargs.get("g_hidden", 0.125)
         self._p_sparse = kwargs.get("p_sparse", 0.2)
         self._epsilon = kwargs.get("diagonal_epsilon", 1.e-5)
+        self._n_minibatch = kwargs.get("n_minibatch", 512)
+        self._max_epoch = kwargs.get("max_epoch", 1000)
 
         # Construct Weight Initialization:
         if self._w_init == "xavier_normal":
@@ -139,16 +155,20 @@ class DeepLagrangianNetwork(nn.Module):
             def init_hidden(layer):
 
                 # Set the Hidden Gain:
-                if self._g_hidden <= 0.0: hidden_gain = torch.nn.init.calculate_gain('relu')
-                else: hidden_gain = self._g_hidden
+                if self._g_hidden <= 0.0:
+                    hidden_gain = torch.nn.init.calculate_gain('relu')
+                else:
+                    hidden_gain = self._g_hidden
 
                 torch.nn.init.constant_(layer.bias, self._b0)
                 torch.nn.init.xavier_normal_(layer.weight, hidden_gain)
 
             def init_output(layer):
                 # Set Output Gain:
-                if self._g_output <= 0.0: output_gain = torch.nn.init.calculate_gain('linear')
-                else: output_gain = self._g_output
+                if self._g_output <= 0.0:
+                    output_gain = torch.nn.init.calculate_gain('linear')
+                else:
+                    output_gain = self._g_output
 
                 torch.nn.init.constant_(layer.bias, self._b0)
                 torch.nn.init.xavier_normal_(layer.weight, output_gain)
@@ -158,16 +178,20 @@ class DeepLagrangianNetwork(nn.Module):
             # Construct initialization function:
             def init_hidden(layer):
                 # Set the Hidden Gain:
-                if self._g_hidden <= 0.0: hidden_gain = torch.nn.init.calculate_gain('relu')
-                else: hidden_gain = self._g_hidden
+                if self._g_hidden <= 0.0:
+                    hidden_gain = torch.nn.init.calculate_gain('relu')
+                else:
+                    hidden_gain = self._g_hidden
 
                 torch.nn.init.constant_(layer.bias, self._b0)
                 torch.nn.init.orthogonal_(layer.weight, hidden_gain)
 
             def init_output(layer):
                 # Set Output Gain:
-                if self._g_output <= 0.0: output_gain = torch.nn.init.calculate_gain('linear')
-                else: output_gain = self._g_output
+                if self._g_output <= 0.0:
+                    output_gain = torch.nn.init.calculate_gain('linear')
+                else:
+                    output_gain = self._g_output
 
                 torch.nn.init.constant_(layer.bias, self._b0)
                 torch.nn.init.orthogonal_(layer.weight, output_gain)
@@ -191,7 +215,9 @@ class DeepLagrangianNetwork(nn.Module):
                 torch.nn.init.sparse_(layer.weight, p_non_zero, output_std)
 
         else:
-            raise ValueError("Weight Initialization Type must be in ['xavier_normal', 'orthogonal', 'sparse'] but is {0}".format(self._w_init))
+            raise ValueError(
+                "Weight Initialization Type must be in ['xavier_normal', 'orthogonal', 'sparse'] but is {0}".format(
+                    self._w_init))
 
         # Compute In- / Output Sizes:
         self.n_dof = n_dof
@@ -287,7 +313,8 @@ class DeepLagrangianNetwork(nn.Module):
 
         # Calculate dH/dq:
         Ldq = self.low_tri(der_l.transpose(2, 1).reshape(-1, self.m)).reshape(-1, self.n_dof, self.n_dof, self.n_dof)
-        Hdq = torch.matmul(Ldq, LT.view(-1, 1, self.n_dof, self.n_dof)) + torch.matmul(L.view(-1, 1, self.n_dof, self.n_dof), Ldq.transpose(2, 3))
+        Hdq = torch.matmul(Ldq, LT.view(-1, 1, self.n_dof, self.n_dof)) + torch.matmul(
+            L.view(-1, 1, self.n_dof, self.n_dof), Ldq.transpose(2, 3))
 
         # Compute the Coriolis & Centrifugal forces:
         Hdt_qd = torch.matmul(Hdt, qd_3d).view(-1, self.n_dof)
@@ -355,3 +382,92 @@ class DeepLagrangianNetwork(nn.Module):
         self.device = self._eye.device
         return self
 
+    def train_model(self, train_q, train_qv, train_qa, train_tau, optimizer, save_model=False):
+        """Trains the current model
+            Arguments:
+                -train_q: numpy array with training data of joint positions (dimensions: (num_samples, n_dof))
+                -train_qv: numpy array with training data of joint velocities (dimensions: (num_samples, n_dof))
+                -train_qa: numpy array with training data of joint accelerations (dimensions: (num_samples, n_dof))
+                -train_tau: numpy array with training data of joint (generalized) torques, it's the target value
+                    (dimensions: (num_samples, n_dof))
+
+                -optimizer: object from TORCH.OPTIM (will be used for the Loss optimization during training)
+
+
+
+            Author: Niccolò Turcato (niccolo.turcato@studenti.unipd.it)
+        """
+
+        # Generate Replay Memory:
+        mem_dim = ((self.n_dof,), (self.n_dof,), (self.n_dof,), (self.n_dof,))
+        mem = PyTorchReplayMemory(train_q.shape[0], self._n_minibatch, mem_dim, self.cuda)
+        mem.add_samples([train_q, train_qv, train_qa, train_tau])
+
+        # Start Training Loop:
+        t0_start = time.perf_counter()
+
+        epoch_i = 0
+        pbar = tqdm(range(self._max_epoch))
+        for epoch_i in pbar:
+            l_mem_mean_inv_dyn, l_mem_var_inv_dyn = 0.0, 0.0
+            l_mem_mean_dEdt, l_mem_var_dEdt = 0.0, 0.0
+            l_mem, n_batches = 0.0, 0.0
+
+            for q, qd, qdd, tau in mem:
+                t0_batch = time.perf_counter()
+
+                # Reset gradients:
+                optimizer.zero_grad()
+
+                # Compute the Rigid Body Dynamics Model:
+                tau_hat, dEdt_hat = self(q, qd, qdd)
+
+                # Compute the loss of the Euler-Lagrange Differential Equation:
+                err_inv = torch.sum((tau_hat - tau) ** 2, dim=1)
+                l_mean_inv_dyn = torch.mean(err_inv)
+                l_var_inv_dyn = torch.var(err_inv)
+
+                # Compute the loss of the Power Conservation:
+                dEdt = torch.matmul(qd.view(-1, self.n_dof, 1).transpose(dim0=1, dim1=2),
+                                    tau.view(-1, self.n_dof, 1)).view(-1)
+                # previous version
+                # dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau.view(-1, 2, 1)).view(-1)
+                err_dEdt = (dEdt_hat - dEdt) ** 2
+                l_mean_dEdt = torch.mean(err_dEdt)
+                l_var_dEdt = torch.var(err_dEdt)
+
+                # Compute gradients & update the weights:
+                loss = l_mean_inv_dyn + l_mem_mean_dEdt
+                loss.backward()
+                optimizer.step()
+
+                # Update internal data:
+                n_batches += 1
+                l_mem += loss.item()
+                l_mem_mean_inv_dyn += l_mean_inv_dyn.item()
+                l_mem_var_inv_dyn += l_var_inv_dyn.item()
+                l_mem_mean_dEdt += l_mean_dEdt.item()
+                l_mem_var_dEdt += l_var_dEdt.item()
+
+                t_batch = time.perf_counter() - t0_batch
+
+            # Update Epoch Loss & Computation Time:
+            l_mem_mean_inv_dyn /= float(n_batches)
+            l_mem_var_inv_dyn /= float(n_batches)
+            l_mem_mean_dEdt /= float(n_batches)
+            l_mem_var_dEdt /= float(n_batches)
+            l_mem /= float(n_batches)
+
+            if epoch_i == 1 or np.mod(epoch_i + 1, 100) == 0:
+                info = "Epoch {0:05d}: ".format(epoch_i) + ", Time = {0:05.1f}s".format(time.perf_counter() - t0_start) \
+                       + ", Loss = {0:.3e}".format(l_mem) \
+                       + ", Inv Dyn = {0:.3e} \u00B1 {1:.3e}" .format(l_mem_mean_inv_dyn, 1.96 * np.sqrt(l_mem_var_inv_dyn)) \
+                       + ", Power Con = {0:.3e} \u00B1 {1:.3e}".format(l_mem_mean_dEdt, 1.96 * np.sqrt(l_mem_var_dEdt))
+                pbar.set_postfix_str(info)
+
+        # Save the Model:
+        if save_model:
+            torch.save({"epoch": epoch_i,
+                        "hyper": self.hyperparameters,
+                        "state_dict": self.state_dict()},
+                       "data/delan_model.torch")
