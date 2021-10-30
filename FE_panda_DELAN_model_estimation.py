@@ -233,7 +233,7 @@ hyper = {'n_width': 64,
          'n_minibatch': 512,
          'learning_rate': 5.e-04,
          'weight_decay': 1.e-5,
-         'max_epoch': 10}
+         'max_epoch': 1}
 
 cuda = False  # Watch this
 
@@ -321,8 +321,8 @@ torch.save({"epoch": epoch_i,
 print("\n################################################")
 print("Evaluating DeLaN:")
 
-Y_tr_hat_list = []
-Y_test_hat_list = []
+Y_tr_hat_list = [[] for i in range(num_dof)]
+Y_test_hat_list = [[] for i in range(num_dof)]
 
 # Training estimates
 for i in range(train_qp.shape[0]):
@@ -334,7 +334,9 @@ for i in range(train_qp.shape[0]):
 
         # Compute predicted torque:
         out = delan_model(q, qd, qdd)
-        Y_tr_hat_list.append(out[0].cpu().numpy().squeeze())
+        tau = out[0].cpu().numpy().squeeze()
+        for j in range(num_dof):
+            Y_tr_hat_list[j].append([tau[j]])
 
 # Test estimates
 for i in range(test_qp.shape[0]):
@@ -346,7 +348,13 @@ for i in range(test_qp.shape[0]):
 
         # Compute predicted torque:
         out = delan_model(q, qd, qdd)
-        Y_test_hat_list.append(out[0].cpu().numpy().squeeze())
+        tau = out[0].cpu().numpy().squeeze()
+        for j in range(num_dof):
+            Y_test_hat_list[j].append([tau[j]])
+
+for i in range(num_dof):
+    Y_tr_hat_list[i] = np.array(Y_tr_hat_list[i])
+    Y_test_hat_list[i] = np.array(Y_test_hat_list[i])
 
 norm_coeff = 1
 
@@ -364,9 +372,7 @@ Y_tr_hat_pd, Y_test_hat_pd, Y_tr_pd, Y_test_pd, Y_tr_noiseless_pd, Y_test_noisel
     norm_coeff=norm_coeff,
     joint_index_list=joint_index_list,
     output_feature=output_feature,
-    noiseless_output_feature=output_feature,
-    var_tr_list=[],
-    var_test_list=[])
+    noiseless_output_feature=output_feature)
 
 # get the erros stats
 Project_Utils.get_stat_estimate(Y_tr_noiseless_pd, [Y_tr_hat_pd], joint_index_list, stat_name='nMSE',
