@@ -223,8 +223,8 @@ elif flg_load:
 else:
     raise RuntimeError('Aborting because no model training or loading was defined')
 
-Y_tr_hat_list = [np.zeros((X_tr.shape[0],1)) for i in range(num_dof)] #delan_model.evaluate(X_tr)
-Y_test_hat_list = [np.zeros((X_tr.shape[0],1)) for i in range(num_dof)] # delan_model.evaluate(X_test)
+Y_tr_hat_list = delan_model.evaluate(X_tr) # [np.zeros((X_tr.shape[0],1)) for i in range(num_dof)]
+Y_test_hat_list = delan_model.evaluate(X_test) # [np.zeros((X_tr.shape[0],1)) for i in range(num_dof)]
 
 # Print estimates and stats
 Y_tr_hat_pd, Y_test_hat_pd, Y_tr_pd, Y_test_pd, Y_tr_noiseless_pd, Y_test_noiseless_pd = Project_FL_Utils.get_pandas_obj(
