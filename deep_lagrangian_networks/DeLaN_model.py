@@ -7,6 +7,8 @@ import numpy as np
 
 from tqdm import tqdm
 
+import Utils
+
 from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
 
 
@@ -147,6 +149,7 @@ class DeepLagrangianNetwork(nn.Module):
         self._epsilon = kwargs.get("diagonal_epsilon", 1.e-5)
         self._n_minibatch = kwargs.get("n_minibatch", 512)
         self._max_epoch = kwargs.get("max_epoch", 1000)
+        self.save_file = kwargs.get("save_file", None)
 
         # Construct Weight Initialization:
         if self._w_init == "xavier_normal":
@@ -368,7 +371,7 @@ class DeepLagrangianNetwork(nn.Module):
         super(DeepLagrangianNetwork, self).cuda(device=device)
 
         # Move the eye matrix to the GPU:
-        self._eye = self._eye.cuda()
+        self._eye = torch.eye(self.n_dof, device=device).view(1, self.n_dof, self.n_dof)
         self.device = self._eye.device
         return self
 
@@ -382,7 +385,7 @@ class DeepLagrangianNetwork(nn.Module):
         self.device = self._eye.device
         return self
 
-    def train_model(self, train_q, train_qv, train_qa, train_tau, optimizer, save_model=False):
+    def train_model(self, train_dataset_joint_variables, train_tau, optimizer, save_model=False):
         """Trains the current model
             Arguments:
                 -train_q: numpy array with training data of joint positions (dimensions: (num_samples, n_dof))
@@ -393,10 +396,11 @@ class DeepLagrangianNetwork(nn.Module):
 
                 -optimizer: object from TORCH.OPTIM (will be used for the Loss optimization during training)
 
-
-
             Author: Niccolò Turcato (niccolo.turcato@studenti.unipd.it)
         """
+
+        # Unpack the training dataset
+        train_q, train_qv, train_qa = Utils.unpack_dataset_joint_variables(train_dataset_joint_variables, self.n_dof)
 
         # Generate Replay Memory:
         mem_dim = ((self.n_dof,), (self.n_dof,), (self.n_dof,), (self.n_dof,))
@@ -407,7 +411,7 @@ class DeepLagrangianNetwork(nn.Module):
         t0_start = time.perf_counter()
 
         epoch_i = 0
-        pbar = tqdm(range(self._max_epoch))
+        pbar = tqdm(range(self._max_epoch), desc="Training DeLaN")
         for epoch_i in pbar:
             l_mem_mean_inv_dyn, l_mem_var_inv_dyn = 0.0, 0.0
             l_mem_mean_dEdt, l_mem_var_dEdt = 0.0, 0.0
@@ -458,16 +462,53 @@ class DeepLagrangianNetwork(nn.Module):
             l_mem_var_dEdt /= float(n_batches)
             l_mem /= float(n_batches)
 
-            if epoch_i == 1 or np.mod(epoch_i + 1, 100) == 0:
-                info = "Epoch {0:05d}: ".format(epoch_i) + ", Time = {0:05.1f}s".format(time.perf_counter() - t0_start) \
-                       + ", Loss = {0:.3e}".format(l_mem) \
-                       + ", Inv Dyn = {0:.3e} \u00B1 {1:.3e}" .format(l_mem_mean_inv_dyn, 1.96 * np.sqrt(l_mem_var_inv_dyn)) \
-                       + ", Power Con = {0:.3e} \u00B1 {1:.3e}".format(l_mem_mean_dEdt, 1.96 * np.sqrt(l_mem_var_dEdt))
-                pbar.set_postfix_str(info)
+            # if epoch_i == 1 or np.mod(epoch_i + 1, 100) == 0:
+            info = "Epoch {0:05d}: ".format(epoch_i+1) + ", Time = {0:05.1f}s".format(time.perf_counter() - t0_start) \
+                   + ", Loss = {0:.3e}".format(l_mem) \
+                   + ", Inv Dyn = {0:.3e} \u00B1 {1:.3e}".format(l_mem_mean_inv_dyn,
+                                                                 1.96 * np.sqrt(l_mem_var_inv_dyn)) \
+                   + ", Power Con = {0:.3e} \u00B1 {1:.3e}".format(l_mem_mean_dEdt, 1.96 * np.sqrt(l_mem_var_dEdt))
+            pbar.set_postfix_str(info)
 
         # Save the Model:
         if save_model:
             torch.save({"epoch": epoch_i,
                         "hyper": self.hyperparameters,
                         "state_dict": self.state_dict()},
-                       "data/delan_model.torch")
+                       self.save_file)
+
+    def evaluate(self, input_set):
+        """
+            Computes the inverse kinematics function for a set of examples (q, q_dot, q_ddot)
+            Arguments:
+                -input_set: numpy array containing a Set of examples, dimensions (num_examples, 3*DOF)
+
+            Returns a list of numpy array:
+                each element i in the list contains value of i-th joint torque (tau_i) that is estimated from
+                tau = inv_kin(q, q_dot, q_ddot)
+                [i.e. column index of output = row index of input]
+        """
+
+        q, q_dot, q_ddot = Utils.unpack_dataset_joint_variables(input_set, self.n_dof)
+
+        Y_hat_list = [[] for i in range(self.n_dof)]
+
+        # Computing estimates
+        pbar = tqdm(range(input_set.shape[0]), desc="Evaluating Examples")
+        for i in pbar:
+            with torch.no_grad():
+                # Convert NumPy samples to torch:
+                q_ = torch.from_numpy(q[i]).float().to(self.device).view(1, -1)
+                qd = torch.from_numpy(q_dot[i]).float().to(self.device).view(1, -1)
+                qdd = torch.from_numpy(q_dot[i]).float().to(self.device).view(1, -1)
+
+                # Compute predicted torque:
+                out = self(q_, qd, qdd)
+                tau = out[0].cpu().numpy().squeeze()
+                # tau = out[0].numpy().squeeze()
+                for j in range(self.n_dof):
+                    Y_hat_list[j].append([tau[j]])
+
+        for i in range(self.n_dof):
+            Y_hat_list[i] = np.array(Y_hat_list[i])
+        return Y_hat_list

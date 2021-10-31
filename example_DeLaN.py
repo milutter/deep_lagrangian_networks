@@ -89,7 +89,7 @@ if __name__ == "__main__":
                                  weight_decay=hyper["weight_decay"],
                                  amsgrad=True)
 
-    delan_model.train_model(train_qp, train_qv, train_qa, train_tau, optimizer)
+    delan_model.train_model(np.hstack(train_qp, train_qv, train_qa), train_tau, optimizer)
 
     # # Generate Replay Memory:
     # mem_dim = ((n_dof, ), (n_dof, ), (n_dof, ), (n_dof, ))
