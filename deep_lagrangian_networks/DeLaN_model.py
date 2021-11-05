@@ -396,7 +396,7 @@ class DeepLagrangianNetwork(nn.Module):
 
                 -optimizer: object from TORCH.OPTIM (will be used for the Loss optimization during training)
 
-            Author: Niccolò Turcato (niccolo.turcato@studenti.unipd.it)
+            Edited: Niccolò Turcato (niccolo.turcato@studenti.unipd.it)
         """
 
         # Unpack the training dataset
