@@ -40,8 +40,8 @@ if __name__ == "__main__":
     # Read the dataset:
     n_dof = 2
     train_data, test_data, divider, _ = load_dataset()
-    train_labels, train_qp, train_qv, train_qa, train_tau, _, _ = train_data
-    test_labels, test_qp, test_qv, test_qa, test_tau, test_m, test_c, test_g, _, _ = test_data
+    train_labels, train_qp, train_qv, train_qa, _, _, train_tau = train_data
+    test_labels, test_qp, test_qv, test_qa, _, _, test_tau, test_m, test_c, test_g = test_data
 
     print("\n\n################################################")
     print("Characters:")
@@ -83,13 +83,13 @@ if __name__ == "__main__":
         delan_model = DeepLagrangianNetwork(n_dof, **hyper)
         delan_model = delan_model.cuda() if cuda else delan_model.cpu()
 
-    # Generate & Initialize the Optimizer:
-    optimizer = torch.optim.Adam(delan_model.parameters(),
+        # Generate & Initialize the Optimizer:
+        optimizer = torch.optim.Adam(delan_model.parameters(),
                                  lr=hyper["learning_rate"],
                                  weight_decay=hyper["weight_decay"],
                                  amsgrad=True)
 
-    delan_model.train_model(np.hstack(train_qp, train_qv, train_qa), train_tau, optimizer)
+        delan_model.train_model(np.hstack(train_qp, train_qv, train_qa), train_tau, optimizer)
 
     # # Generate Replay Memory:
     # mem_dim = ((n_dof, ), (n_dof, ), (n_dof, ), (n_dof, ))

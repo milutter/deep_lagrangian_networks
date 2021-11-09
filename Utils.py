@@ -3,7 +3,8 @@ Utilities Source File
 
 Author: Niccolò Turcato (niccolo.turcato@studenti.unipd.it)
 """
-
+import numpy as np
+import pandas as pd
 
 def unpack_dataset_joint_variables(dataset, n_dof):
     """
@@ -17,3 +18,9 @@ def unpack_dataset_joint_variables(dataset, n_dof):
     qa = dataset[:, n_dof * 2:]  # joint accelerations
 
     return q, qv, qa
+
+def convert_predictions_to_dataset(prediction, features_name, joint_index_list):
+    output_labels = [features_name + '_' + str(joint + 1) for joint in joint_index_list]
+    predictions_pd = pd.DataFrame(prediction, columns=output_labels)
+
+    return predictions_pd
