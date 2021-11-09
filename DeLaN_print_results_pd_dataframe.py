@@ -125,10 +125,10 @@ if __name__ == "__main__":
             delan_tr_tau[i] = out[0].cpu().numpy().squeeze()
             delan_tr_dEdt[i] = out[1].cpu().numpy()
 
-    pd_test_estimates = Utils.convert_predictions_to_dataset(delan_test_tau, 'tau', range(n_dof))
+    pd_test_estimates = Utils.convert_predictions_to_dataset(delan_test_tau, 'tau_est', range(n_dof))
     pkl.dump(pd_test_estimates, open('data/DeLaN_test_estimates.pkl', 'wb'))
 
-    pd_tr_estimates = Utils.convert_predictions_to_dataset(delan_tr_tau, 'tau', range(n_dof))
+    pd_tr_estimates = Utils.convert_predictions_to_dataset(delan_tr_tau, 'tau_est', range(n_dof))
     pkl.dump(pd_tr_estimates, open('data/DeLaN_train_estimates.pkl', 'wb'))
 
     print("\n################################################\n\n\n")
