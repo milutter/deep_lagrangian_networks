@@ -28,20 +28,6 @@ import pickle as pkl
 
 
 if __name__ == "__main__":
-
-    # Read Command Line Arguments:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-c", nargs=1, type=int, required=False, default=[True, ], help="Training using CUDA.")
-    parser.add_argument("-i", nargs=1, type=int, required=False, default=[0, ], help="Set the CUDA id.")
-    parser.add_argument("-s", nargs=1, type=int, required=False, default=[42, ], help="Set the random seed")
-    parser.add_argument("-r", nargs=1, type=int, required=False, default=[1, ], help="Render the figure")
-    parser.add_argument("-l", nargs=1, type=int, required=False, default=[0, ], help="Load the DeLaN model")
-    parser.add_argument("-m", nargs=1, type=int, required=False, default=[0, ], help="Save the DeLaN model")
-    seed, cuda, render, load_model, save_model = init_env(parser.parse_args())
-
-    load_model = True
-    cuda = False
-
     # Read the dataset:
     n_dof = 2
     train_data, test_data, divider, _ = load_dataset()
@@ -62,25 +48,13 @@ if __name__ == "__main__":
 
     delan_model = DeepLagrangianNetwork(n_dof, **state['hyper'])
     delan_model.load_state_dict(state['state_dict'])
-    delan_model = delan_model.cuda() if cuda else delan_model.cpu()
+    delan_model = delan_model.cpu()
 
     print("\n################################################")
     print("Evaluating DeLaN:")
 
     # Compute the inertial, centrifugal & gravitational torque using batched samples
     t0_batch = time.perf_counter()
-
-    # Convert NumPy samples to torch:
-    q = torch.from_numpy(test_qp).float().to(delan_model.device)
-    qd = torch.from_numpy(test_qv).float().to(delan_model.device)
-    qdd = torch.from_numpy(test_qa).float().to(delan_model.device)
-    zeros = torch.zeros_like(q).float().to(delan_model.device)
-
-    # Compute the torque decomposition:
-    with torch.no_grad():
-        delan_g = delan_model.inv_dyn(q, zeros, zeros).cpu().numpy().squeeze()
-        delan_c = delan_model.inv_dyn(q, qd, zeros).cpu().numpy().squeeze() - delan_g
-        delan_m = delan_model.inv_dyn(q, zeros, qdd).cpu().numpy().squeeze() - delan_g
 
     t_batch = (time.perf_counter() - t0_batch) / (3. * float(test_qp.shape[0]))
 
@@ -103,14 +77,28 @@ if __name__ == "__main__":
             qdd = torch.from_numpy(test_qa[i]).float().view(1, -1)
 
             # Compute predicted torque:
+
             out = delan_model(q, qd, qdd)
             delan_test_tau[i] = out[0].cpu().numpy().squeeze()
             delan_test_dEdt[i] = out[1].cpu().numpy()
 
+    # Convert NumPy samples to torch:
+    q = torch.from_numpy(test_qp).float().to(delan_model.device)
+    qd = torch.from_numpy(test_qv).float().to(delan_model.device)
+    qdd = torch.from_numpy(test_qa).float().to(delan_model.device)
+    zeros = torch.zeros_like(q).float().to(delan_model.device)
+    #Computing torque decomposition
+    with torch.no_grad():
+        delan_test_g = delan_model.inv_dyn(q, zeros, zeros).cpu().numpy().squeeze()
+        delan_test_c = delan_model.inv_dyn(q, qd, zeros).cpu().numpy().squeeze() - delan_test_g
+        delan_test_m = delan_model.inv_dyn(q, zeros, qdd).cpu().numpy().squeeze() - delan_test_g
+
+
     t_eval = (time.perf_counter() - t0_evaluation) / float(test_qp.shape[0])
 
     delan_tr_tau, delan_tr_dEdt = np.zeros(train_qp.shape), np.zeros((train_qp.shape[0], 1))
-
+    delan_tr_m, delan_tr_c, delan_tr_g = np.zeros(delan_test_tau.shape), np.zeros(delan_test_tau.shape), \
+                                               np.zeros(delan_test_tau.shape)
     for i in range(train_qp.shape[0]):
 
         with torch.no_grad():
@@ -125,10 +113,23 @@ if __name__ == "__main__":
             delan_tr_tau[i] = out[0].cpu().numpy().squeeze()
             delan_tr_dEdt[i] = out[1].cpu().numpy()
 
-    pd_test_estimates = Utils.convert_predictions_to_dataset(delan_test_tau, 'tau_est', range(n_dof))
+    # Convert NumPy samples to torch:
+    q = torch.from_numpy(train_qp).float().to(delan_model.device)
+    qd = torch.from_numpy(train_qv).float().to(delan_model.device)
+    qdd = torch.from_numpy(train_qa).float().to(delan_model.device)
+    zeros = torch.zeros_like(q).float().to(delan_model.device)
+    #Computing torque decomposition
+    with torch.no_grad():
+        delan_tr_g = delan_model.inv_dyn(q, zeros, zeros).cpu().numpy().squeeze()
+        delan_tr_c = delan_model.inv_dyn(q, qd, zeros).cpu().numpy().squeeze() - delan_tr_g
+        delan_tr_m = delan_model.inv_dyn(q, zeros, qdd).cpu().numpy().squeeze() - delan_tr_g
+
+    pd_test_estimates = Utils.convert_predictions_to_dataset(np.hstack([delan_test_tau, delan_test_m, delan_test_c, delan_test_g]),
+                                                             ['tau_est', 'm_est', 'c_est', 'g_est'], range(n_dof))
     pkl.dump(pd_test_estimates, open('data/DeLaN_test_estimates.pkl', 'wb'))
 
-    pd_tr_estimates = Utils.convert_predictions_to_dataset(delan_tr_tau, 'tau_est', range(n_dof))
+    pd_tr_estimates = Utils.convert_predictions_to_dataset(np.hstack([delan_tr_tau, delan_tr_m, delan_tr_c, delan_tr_g]),
+                                                            ['tau_est', 'm_est', 'c_est', 'g_est'], range(n_dof))
     pkl.dump(pd_tr_estimates, open('data/DeLaN_train_estimates.pkl', 'wb'))
 
     print("\n################################################\n\n\n")

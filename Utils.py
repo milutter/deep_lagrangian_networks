@@ -20,7 +20,9 @@ def unpack_dataset_joint_variables(dataset, n_dof):
     return q, qv, qa
 
 def convert_predictions_to_dataset(prediction, features_name, joint_index_list):
-    output_labels = [features_name + '_' + str(joint + 1) for joint in joint_index_list]
+    output_labels = []
+    for feat_name in features_name:
+        output_labels += [feat_name + '_' + str(joint + 1) for joint in joint_index_list]
     predictions_pd = pd.DataFrame(prediction, columns=output_labels)
 
     return predictions_pd
