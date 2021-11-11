@@ -491,7 +491,7 @@ class DeepLagrangianNetwork(nn.Module):
 
         q, q_dot, q_ddot = Utils.unpack_dataset_joint_variables(input_set, self.n_dof)
 
-        Y_hat_list = [[] for i in range(self.n_dof)]
+        Y_hat = np.zeros(q.shape)
 
         # Computing estimates
         pbar = tqdm(range(input_set.shape[0]), desc="Evaluating Examples")
@@ -505,10 +505,6 @@ class DeepLagrangianNetwork(nn.Module):
                 # Compute predicted torque:
                 out = self(q_, qd, qdd)
                 tau = out[0].cpu().numpy().squeeze()
-                # tau = out[0].numpy().squeeze()
-                for j in range(self.n_dof):
-                    Y_hat_list[j].append([tau[j]])
+                Y_hat[i] = tau
 
-        for i in range(self.n_dof):
-            Y_hat_list[i] = np.array(Y_hat_list[i])
-        return Y_hat_list
+        return Y_hat

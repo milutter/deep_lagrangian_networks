@@ -6,12 +6,14 @@ Author: Niccolò Turcato (niccolo.turcato@studenti.unipd.it)
 """
 from matplotlib import pyplot as plt
 
+import Utils
 import robust_fl_with_gps.Project_Utils as Project_FL_Utils
 
 import argparse
 import torch
 import numpy as np
 import time
+import pickle as pkl
 
 import PyQt5
 
@@ -114,7 +116,7 @@ parser.add_argument('-num_threads',
                     help='Number of computational threads.')
 parser.add_argument('-downsampling',
                     type=int,
-                    default=1,
+                    default=10,
                     help='Downsampling.')
 locals().update(vars(parser.parse_known_args()[0]))
 
@@ -130,7 +132,7 @@ flg_load = False
 # flg_cuda = False
 flg_cuda = True  # Watch this
 
-downsampling = 100
+downsampling = 10
 num_threads = 4
 N_epoch = 500
 batch_size = 512
@@ -178,6 +180,16 @@ X_test, Y_test, active_dims_list, data_frame_test = Project_FL_Utils.get_data_fr
                                                                                             output_feature,
                                                                                             num_dof)
 
+path_suff = ''
+if downsampling > 1:
+    path_suff+='_downsampling_'+str(downsampling)
+    print('## Downsampling signals... ', end='')
+    X_tr = X_tr[::downsampling]
+    Y_tr = Y_tr[::downsampling]
+    X_test = X_test[::downsampling]
+    Y_test = Y_test[::downsampling]
+    print('Done!')
+
 print("\n\n################################################")
 print("# Training Samples = {0:05d}".format(int(X_tr.shape[0])))
 print("# Test Samples = {0:05d}".format(int(X_test.shape[0])))
@@ -223,36 +235,52 @@ elif flg_load:
 else:
     raise RuntimeError('Aborting because no model training or loading was defined')
 
-Y_tr_hat_list = delan_model.evaluate(X_tr) # [np.zeros((X_tr.shape[0],1)) for i in range(num_dof)]
-Y_test_hat_list = delan_model.evaluate(X_test) # [np.zeros((X_tr.shape[0],1)) for i in range(num_dof)]
+print("Evaluating model.....")
 
-# Print estimates and stats
-Y_tr_hat_pd, Y_test_hat_pd, Y_tr_pd, Y_test_pd, Y_tr_noiseless_pd, Y_test_noiseless_pd = Project_FL_Utils.get_pandas_obj(
-    output_tr=Y_tr,
-    output_test=Y_test,
-    noiseless_output_tr=Y_tr,
-    noiseless_output_test=Y_test,
-    Y_tr_hat_list=Y_tr_hat_list,
-    Y_test_hat_list=Y_test_hat_list,
-    flg_norm=flg_norm,
-    norm_coeff=norm_coeff,
-    joint_index_list=joint_index_list,
-    output_feature=output_feature,
-    noiseless_output_feature=output_feature)
+delan_model.cpu()
 
-# get the erros stats
-Project_FL_Utils.get_stat_estimate(Y_tr_noiseless_pd, [Y_tr_hat_pd], joint_index_list, stat_name='nMSE',
-                                   output_feature=output_feature)
-Project_FL_Utils.get_stat_estimate(Y_test_noiseless_pd, [Y_test_hat_pd], joint_index_list, stat_name='nMSE',
-                                   output_feature=output_feature)
-# Project_Utils.get_stat_estimate(Y_test2_noiseless_pd, [Y_test2_hat_pd], joint_index_list, stat_name='nMSE', output_feature=output_feature, output_feature_noiseless=noiseless_output_feature)
-# print the estimates
-Project_FL_Utils.print_estimate(Y_tr_pd, [Y_tr_hat_pd], joint_index_list, flg_print_var=True,
-                                output_feature=output_feature, data_noiseless=Y_tr_noiseless_pd,
-                                noiseless_output_feature=output_feature, label_prefix='tr_')
-# plt.show()
-Project_FL_Utils.print_estimate(Y_test_pd, [Y_test_hat_pd], joint_index_list, flg_print_var=True,
-                                output_feature=output_feature, label_prefix='test_')
-plt.show()
-# Project_Utils.print_estimate(Y_test2_pd, [Y_test2_hat_pd], joint_index_list, flg_print_var=True, output_feature=output_feature)
-# plt.show()
+train_qp, train_qv, train_qa = Utils.unpack_dataset_joint_variables(X_tr, num_dof)
+test_qp, test_qv, test_qa = Utils.unpack_dataset_joint_variables(X_test, num_dof)
+
+delan_test_tau = delan_model.evaluate(X_test)
+
+q = torch.from_numpy(test_qp).float().to(delan_model.device)
+qd = torch.from_numpy(test_qv).float().to(delan_model.device)
+qdd = torch.from_numpy(test_qa).float().to(delan_model.device)
+zeros = torch.zeros_like(q).float().to(delan_model.device)
+#Computing torque decomposition
+with torch.no_grad():
+    delan_test_g = delan_model.inv_dyn(q, zeros, zeros).cpu().numpy().squeeze()
+    delan_test_c = delan_model.inv_dyn(q, qd, zeros).cpu().numpy().squeeze() - delan_test_g
+    delan_test_m = delan_model.inv_dyn(q, zeros, qdd).cpu().numpy().squeeze() - delan_test_g
+
+delan_tr_tau = delan_model.evaluate(X_tr)
+
+# Convert NumPy samples to torch:
+q = torch.from_numpy(train_qp).float().to(delan_model.device)
+qd = torch.from_numpy(train_qv).float().to(delan_model.device)
+qdd = torch.from_numpy(train_qa).float().to(delan_model.device)
+zeros = torch.zeros_like(q).float().to(delan_model.device)
+#Computing torque decomposition
+with torch.no_grad():
+    delan_tr_g = delan_model.inv_dyn(q, zeros, zeros).cpu().numpy().squeeze()
+    delan_tr_c = delan_model.inv_dyn(q, qd, zeros).cpu().numpy().squeeze() - delan_tr_g
+    delan_tr_m = delan_model.inv_dyn(q, zeros, qdd).cpu().numpy().squeeze() - delan_tr_g
+
+
+tr_estimates_saving_path = 'data/'+robot_name+path_suff+'_DeLaN_train_estimates.pkl'
+test_estimates_saving_path = 'data/'+robot_name+path_suff+'_DeLaN_test_estimates.pkl'
+
+pd_test_estimates = Utils.convert_predictions_to_dataset(np.hstack([delan_test_tau, delan_test_m, delan_test_c, delan_test_g]),
+                                                            ['tau_est', 'm_est', 'c_est', 'g_est'], range(num_dof))
+
+pd_tr_estimates = Utils.convert_predictions_to_dataset(np.hstack([delan_tr_tau, delan_tr_m, delan_tr_c, delan_tr_g]),
+                                                            ['tau_est', 'm_est', 'c_est', 'g_est'], range(num_dof))
+
+if flg_save:
+    print("Saving estimates...")
+    pkl.dump(pd_tr_estimates, open(tr_estimates_saving_path, 'wb'))
+    pkl.dump(pd_test_estimates, open(test_estimates_saving_path, 'wb'))
+    print("Done!")
+
+print("\n################################################\n\n\n")
