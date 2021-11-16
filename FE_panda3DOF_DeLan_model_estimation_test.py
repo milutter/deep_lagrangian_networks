@@ -123,12 +123,13 @@ locals().update(vars(parser.parse_known_args()[0]))
 
 # %%
 # Set flags -- for debug
-flg_train = True
+#flg_train = True
+flg_train = False
 
 # flg_save = True
 
-flg_load = False
-# flg_load = True
+#flg_load = False
+flg_load = True
 
 # flg_cuda = False
 flg_cuda = True  # Watch this
@@ -219,6 +220,7 @@ hyper = {"n_width": 128, "n_depth": 3, "diagonal_epsilon": 0.01, "activation": "
          "activations": "SoftPlus", "w_inits": "orthogonal",
          'save_file': model_saving_path + path_suff + 'delan_panda3DOF_model.torch'}
 
+
 # Splitting test-val dataset
 split = 10  # N_train/split samples to val and (Ntrain - N_train/split) to train
 val_size = int(X_tr.shape[0] / split)
@@ -254,7 +256,7 @@ else:
 
 delan_model.cpu()
 
-train_qp, train_qv, train_qa = Utils.unpack_dataset_joint_variables(X_tr, num_dof)
+
 test_qp, test_qv, test_qa = Utils.unpack_dataset_joint_variables(X_test, num_dof)
 
 delan_test_tau = delan_model.evaluate(X_test)
@@ -269,8 +271,11 @@ with torch.no_grad():
     delan_test_c = delan_model.inv_dyn(q, qd, zeros).cpu().numpy().squeeze() - delan_test_g
     delan_test_m = delan_model.inv_dyn(q, zeros, qdd).cpu().numpy().squeeze() - delan_test_g
 
-delan_tr_tau = delan_model.evaluate(X_tr)
+X_tr = np.vstack((X_tr, X_val))
+Y_tr = np.vstack((Y_tr, Y_val))
 
+delan_tr_tau = delan_model.evaluate(X_tr)
+train_qp, train_qv, train_qa = Utils.unpack_dataset_joint_variables(X_tr, num_dof)
 # Convert NumPy samples to torch:
 q = torch.from_numpy(train_qp).float().to(delan_model.device)
 qd = torch.from_numpy(train_qv).float().to(delan_model.device)
