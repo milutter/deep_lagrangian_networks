@@ -1,0 +1,1 @@
+{"exDict": {"n_width": 128, "n_depth": 3, "diagonal_epsilon": 0.01, "activation": "SoftPlus", "b_init": 0.0001, "b_diag_init": 0.001, "w_init": "orthogonal", "gain_hidden": 1.4142135623730951, "gain_output": 0.1, "n_minibatch": 512, "learning_rate": 0.01, "weight_decay": 1e-05, "max_epoch": 20000, "activations": "SoftPlus", "w_inits": "orthogonal"}}

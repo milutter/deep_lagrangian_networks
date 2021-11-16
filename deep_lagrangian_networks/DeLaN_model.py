@@ -10,6 +10,8 @@ from tqdm import tqdm
 import Utils
 
 from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
+from pytorchtools import EarlyStopping
+
 
 
 class LowTri:
@@ -385,12 +387,17 @@ class DeepLagrangianNetwork(nn.Module):
         self.device = self._eye.device
         return self
 
-    def train_model(self, train_dataset_joint_variables, train_tau, optimizer, save_model=False):
+    @torch.no_grad()
+    def weight_reset(self):
+        """Resets the weights with the initialization parameters defined at creation
+        """
+        self(self.n_dof, **self.hyperparameters)
+
+    def train_model(self, train_dataset_joint_variables, train_tau, optimizer, save_model=False, early_stopping=None, X_val=None, Y_val=None):
         """Trains the current model
             Arguments:
-                -train_q: numpy array with training data of joint positions (dimensions: (num_samples, n_dof))
-                -train_qv: numpy array with training data of joint velocities (dimensions: (num_samples, n_dof))
-                -train_qa: numpy array with training data of joint accelerations (dimensions: (num_samples, n_dof))
+                -train_dataset_joint_variables:  numpy array with training data of joint positions, velocities
+                    and accelerations (dimensions: (num_samples, 3*n_dof))
                 -train_tau: numpy array with training data of joint (generalized) torques, it's the target value
                     (dimensions: (num_samples, n_dof))
 
@@ -404,8 +411,15 @@ class DeepLagrangianNetwork(nn.Module):
 
         # Generate Replay Memory:
         mem_dim = ((self.n_dof,), (self.n_dof,), (self.n_dof,), (self.n_dof,))
-        mem = PyTorchReplayMemory(train_q.shape[0], self._n_minibatch, mem_dim, self.cuda)
-        mem.add_samples([train_q, train_qv, train_qa, train_tau])
+        mem_train = PyTorchReplayMemory(train_q.shape[0], self._n_minibatch, mem_dim, self.cuda)
+        mem_train.add_samples([train_q, train_qv, train_qa, train_tau])
+
+        if not(X_val is None or Y_val is None):
+            # Unpack the validation dataset
+            val_q, val_qv, val_qa = Utils.unpack_dataset_joint_variables(X_val, self.n_dof)
+
+            mem_val = PyTorchReplayMemory(val_q.shape[0], self._n_minibatch, mem_dim, self.cuda)
+            mem_val.add_samples([val_q, val_qv, val_qa, Y_val])
 
         # Start Training Loop:
         t0_start = time.perf_counter()
@@ -417,7 +431,7 @@ class DeepLagrangianNetwork(nn.Module):
             l_mem_mean_dEdt, l_mem_var_dEdt = 0.0, 0.0
             l_mem, n_batches = 0.0, 0.0
 
-            for q, qd, qdd, tau in mem:
+            for q, qd, qdd, tau in mem_train:
                 t0_batch = time.perf_counter()
 
                 # Reset gradients:
@@ -462,13 +476,46 @@ class DeepLagrangianNetwork(nn.Module):
             l_mem_var_dEdt /= float(n_batches)
             l_mem /= float(n_batches)
 
+            l_val_mem = 0.0
+            if not(X_val is None or Y_val is None):
+                with torch.no_grad():
+                    for q, qd, qdd, tau in mem_val:
+                        t0_batch = time.perf_counter()
+
+                        # Compute the Rigid Body Dynamics Model:
+                        tau_hat, dEdt_hat = self(q, qd, qdd)
+
+                        err_inv = torch.sum((tau_hat - tau) ** 2, dim=1)
+                        l_mean_inv_dyn = torch.mean(err_inv)
+
+                        dEdt = torch.matmul(qd.view(-1, self.n_dof, 1).transpose(dim0=1, dim1=2),
+                                            tau.view(-1, self.n_dof, 1)).view(-1)
+                        # previous version
+                        # dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau.view(-1, 2, 1)).view(-1)
+                        err_dEdt = (dEdt_hat - dEdt) ** 2
+                        l_mean_dEdt = torch.mean(err_dEdt)
+
+                        loss = l_mean_inv_dyn + l_mem_mean_dEdt
+
+                        l_val_mem += loss.item()
+
+
             # if epoch_i == 1 or np.mod(epoch_i + 1, 100) == 0:
             info = "Epoch {0:05d}: ".format(epoch_i+1) + ", Time = {0:05.1f}s".format(time.perf_counter() - t0_start) \
                    + ", Loss = {0:.3e}".format(l_mem) \
                    + ", Inv Dyn = {0:.3e} \u00B1 {1:.3e}".format(l_mem_mean_inv_dyn,
                                                                  1.96 * np.sqrt(l_mem_var_inv_dyn)) \
                    + ", Power Con = {0:.3e} \u00B1 {1:.3e}".format(l_mem_mean_dEdt, 1.96 * np.sqrt(l_mem_var_dEdt))
+            if not(X_val is None or Y_val is None):
+                info += ", valid loss = {0:.3e}".format(l_val_mem)
             pbar.set_postfix_str(info)
+
+            if early_stopping is not None:
+                early_stopping(l_val_mem, self)
+                if early_stopping.early_stop:
+                    print("# Early stopping condition reached #")
+                    break
+
 
         # Save the Model:
         if save_model:
