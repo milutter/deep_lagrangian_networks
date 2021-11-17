@@ -417,7 +417,6 @@ class DeepLagrangianNetwork(nn.Module):
         if not(X_val is None or Y_val is None):
             # Unpack the validation dataset
             val_q, val_qv, val_qa = Utils.unpack_dataset_joint_variables(X_val, self.n_dof)
-
             mem_val = PyTorchReplayMemory(val_q.shape[0], self._n_minibatch, mem_dim, self.cuda)
             mem_val.add_samples([val_q, val_qv, val_qa, Y_val])
 
@@ -476,7 +475,7 @@ class DeepLagrangianNetwork(nn.Module):
             l_mem_var_dEdt /= float(n_batches)
             l_mem /= float(n_batches)
 
-            l_val_mem = 0.0
+            l_val_mem, n_batches = 0.0, 0.0
             if not(X_val is None or Y_val is None):
                 with torch.no_grad():
                     for q, qd, qdd, tau in mem_val:
@@ -498,6 +497,9 @@ class DeepLagrangianNetwork(nn.Module):
                         loss = l_mean_inv_dyn + l_mem_mean_dEdt
 
                         l_val_mem += loss.item()
+                        n_batches+=1
+                l_val_mem /= float(n_batches)
+
 
 
             # if epoch_i == 1 or np.mod(epoch_i + 1, 100) == 0:
