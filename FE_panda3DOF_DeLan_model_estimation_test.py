@@ -168,13 +168,13 @@ pos_indices = range(0, num_dof)
 acc_indices = range(2 * num_dof, 3 * num_dof)
 input_features_joint_list = [input_features] * num_dof
 
-X_tr, Y_tr, active_dims_list, data_frame_tr = Project_FL_Utils.get_data_from_features(tr_path,
+X_test, Y_test, active_dims_list, data_frame_tr = Project_FL_Utils.get_data_from_features(tr_path,
                                                                                       input_features,
                                                                                       input_features_joint_list,
                                                                                       output_feature,
                                                                                       num_dof)
 
-X_test, Y_test, active_dims_list, data_frame_test = Project_FL_Utils.get_data_from_features(test_path,
+X_tr, Y_tr, active_dims_list, data_frame_test = Project_FL_Utils.get_data_from_features(test_path,
                                                                                             input_features,
                                                                                             input_features_joint_list,
                                                                                             output_feature,
@@ -229,7 +229,7 @@ Y_val = Y_tr[Y_tr.shape[0] - val_size:, :]
 X_tr = X_tr[:X_tr.shape[0] - val_size, :]
 Y_tr = Y_tr[:Y_tr.shape[0] - val_size, :]
 
-patience = int(hyper['max_epoch'] / 4)
+patience = int(hyper['max_epoch'] / 400)
 
 early_stopping = EarlyStopping(patience=patience, verbose=False)
 
@@ -241,7 +241,7 @@ if flg_train:
                                  weight_decay=hyper["weight_decay"],
                                  amsgrad=True)
 
-    delan_model.train_model(X_tr, Y_tr, optimizer, save_model=flg_save, early_stopping=early_stopping, X_val=X_val, Y_val=Y_val)
+    train_loss, val_loss = delan_model.train_model(X_tr, Y_tr, optimizer, save_model=flg_save, early_stopping=early_stopping, X_val=X_val, Y_val=Y_val)
     # Utils.train_model(delan_model, X_tr, Y_tr, optimizer, save_model=flg_save)
 
 elif flg_load:
@@ -256,6 +256,14 @@ else:
 
 delan_model.cpu()
 
+
+if(flg_train):
+    plt.figure()
+    plt.title('Plot of train-val losses')
+    plt.plot(train_loss, color='b', label='train loss')
+    plt.plot(val_loss, color='g', label='val loss')
+    plt.legend()
+    plt.show()
 
 test_qp, test_qv, test_qa = Utils.unpack_dataset_joint_variables(X_test, num_dof)
 
