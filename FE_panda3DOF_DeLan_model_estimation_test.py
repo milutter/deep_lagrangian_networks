@@ -168,13 +168,13 @@ pos_indices = range(0, num_dof)
 acc_indices = range(2 * num_dof, 3 * num_dof)
 input_features_joint_list = [input_features] * num_dof
 
-X_test, Y_test, active_dims_list, data_frame_tr = Project_FL_Utils.get_data_from_features(tr_path,
+X_tr, Y_tr, active_dims_list, data_frame_tr = Project_FL_Utils.get_data_from_features(tr_path,
                                                                                       input_features,
                                                                                       input_features_joint_list,
                                                                                       output_feature,
                                                                                       num_dof)
 
-X_tr, Y_tr, active_dims_list, data_frame_test = Project_FL_Utils.get_data_from_features(test_path,
+X_test, Y_test, active_dims_list, data_frame_test = Project_FL_Utils.get_data_from_features(test_path,
                                                                                             input_features,
                                                                                             input_features_joint_list,
                                                                                             output_feature,
