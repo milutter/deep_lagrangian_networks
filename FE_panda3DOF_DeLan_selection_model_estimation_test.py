@@ -26,6 +26,8 @@ from deep_lagrangian_networks.DeLaN_model import DeepLagrangianNetwork
 from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
 import json
 
+from pytorchtools import EarlyStopping
+
 try:
     mp.use("Qt5Agg")
     mp.rc('text', usetex=True)
@@ -236,15 +238,29 @@ for combination in itertools.product(*parameters):
 
 adam_lambda = lambda model_params, lr, wd, amsgrad: torch.optim.Adam(model_params, lr=lr, weight_decay=wd, amsgrad=amsgrad)
 
+
+# Splitting test-val dataset
+split = 10  # N_train/split samples to val and (Ntrain - N_train/split) to train
+val_size = int(X_tr.shape[0] / split)
+X_val = X_tr[X_tr.shape[0] - val_size:, :]
+Y_val = Y_tr[Y_tr.shape[0] - val_size:, :]
+X_tr = X_tr[:X_tr.shape[0] - val_size, :]
+Y_tr = Y_tr[:Y_tr.shape[0] - val_size, :]
+
 # If time is strict, consider reducing
 downsampling_model_selction = 10
 X, Y = X_tr, Y_tr
 X = X[::downsampling_model_selction]
 Y = Y[::downsampling_model_selction]
 
+patience = int(hyper['max_epoch'] / 400)
+
+early_stopping = True
+
 # Model selection with all training data
 idx_best_hyper = Utils.k_fold_cross_val_model_selection(num_dof, adam_lambda, X, Y, hyper_list, flg_cuda=flg_cuda,
-                                                        k_folds=2)
+                                                        k_folds=2, early_stopping=early_stopping,
+                                                        X_val=X_val, Y_val=Y_val)
 
 best_hyper = hyper_list[idx_best_hyper].copy()
 best_hyper['max_epoch'] = 20000  # Set the max epoch for the model we decide to train and use
@@ -271,7 +287,17 @@ optimizer = torch.optim.Adam(delan_model.parameters(),
                              weight_decay=best_hyper["weight_decay"],
                              amsgrad=True)
 
-delan_model.train_model(X_tr, Y_tr, optimizer, save_model=flg_save)
+patience = int(hyper['max_epoch'] / 400)
+
+early_stopping = EarlyStopping(patience=patience, verbose=False)
+
+train_loss, val_loss = delan_model.train_model(X_tr, Y_tr, optimizer, save_model=flg_save, early_stopping=early_stopping, X_val=X_val, Y_val=Y_val)
+
+plt.figure()
+plt.title('Plot of train-val losses')
+plt.plot(train_loss, color='b', label='train loss')
+plt.plot(val_loss, color='g', label='val loss')
+plt.legend()
 
 
 delan_model.cpu()
@@ -323,3 +349,4 @@ if flg_save:
     print("Done!")
 
 print("\n################################################\n\n\n")
+plt.show()
