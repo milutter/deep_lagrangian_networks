@@ -11,8 +11,10 @@ import torch
 from sklearn.model_selection import KFold
 from tqdm import tqdm
 
+import pytorchtools
 from deep_lagrangian_networks.DeLaN_model import DeepLagrangianNetwork
 from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
+from pytorchtools import EarlyStopping
 
 
 def unpack_dataset_joint_variables(dataset, n_dof):
@@ -48,7 +50,8 @@ def MSE(y, y_hat):
     return np.sum((y - y_hat) ** 2) / num_sample
 
 
-def k_fold_cross_val_model_selection(num_dof, optimizer_lambda, dataset, targets, hyperparameters_list, k_folds=5, flg_cuda=True):
+def k_fold_cross_val_model_selection(num_dof, optimizer_lambda, dataset, targets, hyperparameters_list, k_folds=5,
+                                     flg_cuda=True, X_val=None, Y_val=None, early_stopping=False, patience=50):
     """
         Perfroms k-fold cross validation for model selection
     """
@@ -87,7 +90,12 @@ def k_fold_cross_val_model_selection(num_dof, optimizer_lambda, dataset, targets
             delan_model = delan_model.cuda(torch.device('cuda:0')) if flg_cuda else delan_model.cpu()
             optimizer = optimizer_lambda(delan_model.parameters(), hyperparameters["learning_rate"],
                                          hyperparameters["weight_decay"], True)
-            delan_model.train_model(train_data, train_targets, optimizer, save_model=False)
+            if early_stopping:
+                earlystop = EarlyStopping(patience, False, path='data/model_selection/checkpoint_mod{}.pt'.format(model_idx))
+                delan_model.train_model(train_data, train_targets, optimizer, save_model=False,
+                                        early_stopping=earlystop, X_val=X_val, Y_val=Y_val)
+            else:
+                delan_model.train_model(train_data, train_targets, optimizer, save_model=False)
 
             # Process is complete.
             print('Training process has finished.', flush=True)

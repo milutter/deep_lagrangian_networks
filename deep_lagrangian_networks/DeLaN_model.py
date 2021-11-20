@@ -526,11 +526,12 @@ class DeepLagrangianNetwork(nn.Module):
             if early_stopping is not None:
                 early_stopping(l_val_mem, self)
                 if early_stopping.early_stop:
+                    self.load_state_dict(early_stopping.saved_model.state_dict())
                     print("# Early stopping condition reached #")
                     break
 
             # Save the Model:
-            if (save_model and epoch_i+1 == self._max_epoch) or ((epoch_i + 1) % self._save_epoch == 0):
+            if save_model and (epoch_i + 1 == self._max_epoch or (epoch_i + 1) % self._save_epoch == 0):
                 torch.save({"epoch": epoch_i,
                             "hyper": self.hyperparameters,
                             "state_dict": self.state_dict()},
@@ -554,20 +555,15 @@ class DeepLagrangianNetwork(nn.Module):
 
         q, q_dot, q_ddot = Utils.unpack_dataset_joint_variables(input_set, self.n_dof)
 
-        Y_hat = np.zeros(q.shape)
+        print('Computing estimations...  ', end='')
 
-        # Computing estimates
-        pbar = tqdm(range(input_set.shape[0]), desc="Evaluating Examples")
-        for i in pbar:
-            with torch.no_grad():
-                # Convert NumPy samples to torch:
-                q_ = torch.from_numpy(q[i]).float().to(self.device).view(1, -1)
-                qd = torch.from_numpy(q_dot[i]).float().to(self.device).view(1, -1)
-                qdd = torch.from_numpy(q_dot[i]).float().to(self.device).view(1, -1)
+        with torch.no_grad():
+            q = torch.from_numpy(q).float().to(self.device)
+            q_dot = torch.from_numpy(q_dot).float().to(self.device)
+            q_ddot = torch.from_numpy(q_ddot).float().to(self.device)
 
-                # Compute predicted torque:
-                out = self(q_, qd, qdd)
-                tau = out[0].cpu().numpy().squeeze()
-                Y_hat[i] = tau
+            Y_hat = self.inv_dyn(q, q_dot, q_ddot).cpu().numpy().squeeze()
+
+        print('done!')
 
         return Y_hat
