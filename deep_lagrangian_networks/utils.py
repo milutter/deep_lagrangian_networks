@@ -4,6 +4,7 @@ import torch
 import jax
 import jax.numpy as jnp
 import haiku as hk
+import functools
 
 def init_env(args):
 
@@ -96,7 +97,7 @@ def parition_params(module_name, name, value, key):
     return module_name.split("/")[0] == key
 
 def get_params(params, key):
-    return hk.data_structures.partition(jax.partial(parition_params, key=key), params)
+    return hk.data_structures.partition(functools.partial(parition_params, key=key), params)
 
 activations = {
     'tanh': jnp.tanh,

@@ -7,8 +7,8 @@ import matplotlib as mp
 
 try:
     mp.use("Qt5Agg")
-    mp.rc('text', usetex=True)
-    mp.rcParams['text.latex.preamble'] = [r"\usepackage{amsmath}"]
+    mp.rc('text', usetex=False)
+    #mp.rcParams['text.latex.preamble'] = r"\usepackage{amsmath}"
 
 except ImportError:
     pass
@@ -35,9 +35,9 @@ if __name__ == "__main__":
 
     # Read the dataset:
     n_dof = 2
-    train_data, test_data, divider = load_dataset()
-    train_labels, train_qp, train_qv, train_qa, train_tau = train_data
-    test_labels, test_qp, test_qv, test_qa, test_tau, test_m, test_c, test_g = test_data
+    train_data, test_data, divider, dt_mean = load_dataset()
+    train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
+    test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
 
     print("\n\n################################################")
     print("Characters:")
@@ -236,7 +236,6 @@ if __name__ == "__main__":
     y_g_low = np.clip(1.2 * np.min(np.vstack((test_g, delan_g)), axis=0), -np.inf, -0.01)
     y_g_max = np.clip(1.2 * np.max(np.vstack((test_g, delan_g)), axis=0), 0.01, np.inf)
 
-    plt.rc('text', usetex=True)
     color_i = ["r", "b", "g", "k"]
 
     ticks = np.array(divider)
@@ -244,15 +243,15 @@ if __name__ == "__main__":
 
     fig = plt.figure(figsize=(24.0/1.54, 8.0/1.54), dpi=100)
     fig.subplots_adjust(left=0.08, bottom=0.12, right=0.98, top=0.95, wspace=0.3, hspace=0.2)
-    fig.canvas.set_window_title('Seed = {0}'.format(seed))
+    fig.canvas.manager.set_window_title('Seed = {0}'.format(seed))
 
     legend = [mp.patches.Patch(color=color_i[0], label="DeLaN"),
               mp.patches.Patch(color="k", label="Ground Truth")]
 
     # Plot Torque
     ax0 = fig.add_subplot(2, 4, 1)
-    ax0.set_title(r"$\boldsymbol{\tau}$")
-    ax0.text(s=r"\textbf{Joint 0}", x=-0.35, y=.5, fontsize=12, fontweight="bold", rotation=90, horizontalalignment="center", verticalalignment="center", transform=ax0.transAxes)
+    ax0.set_title("tau")
+    ax0.text(s="Joint 0", x=-0.35, y=.5, fontsize=12, fontweight="bold", rotation=90, horizontalalignment="center", verticalalignment="center", transform=ax0.transAxes)
     ax0.set_ylabel("Torque [Nm]")
     ax0.get_yaxis().set_label_coords(-0.2, 0.5)
     ax0.set_ylim(y_t_low[0], y_t_max[0])
@@ -262,10 +261,10 @@ if __name__ == "__main__":
     ax0.set_xlim(divider[0], divider[-1])
 
     ax1 = fig.add_subplot(2, 4, 5)
-    ax1.text(s=r"\textbf{Joint 1}", x=-.35, y=0.5, fontsize=12, fontweight="bold", rotation=90,
+    ax1.text(s="Joint 1", x=-.35, y=0.5, fontsize=12, fontweight="bold", rotation=90,
              horizontalalignment="center", verticalalignment="center", transform=ax1.transAxes)
 
-    ax1.text(s=r"\textbf{(a)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax1.text(s="(a)", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax1.transAxes)
 
     ax1.set_ylabel("Torque [Nm]")
@@ -288,7 +287,7 @@ if __name__ == "__main__":
 
     # Plot Mass Torque
     ax0 = fig.add_subplot(2, 4, 2)
-    ax0.set_title(r"$\displaystyle\mathbf{H}(\mathbf{q}) \ddot{\mathbf{q}}$")
+    ax0.set_title("H(q) * q_ddot")
     ax0.set_ylabel("Torque [Nm]")
     ax0.set_ylim(y_m_low[0], y_m_max[0])
     ax0.set_xticks(ticks)
@@ -297,7 +296,7 @@ if __name__ == "__main__":
     ax0.set_xlim(divider[0], divider[-1])
 
     ax1 = fig.add_subplot(2, 4, 6)
-    ax1.text(s=r"\textbf{(b)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax1.text(s="(b)", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax1.transAxes)
 
     ax1.set_ylabel("Torque [Nm]")
@@ -317,7 +316,7 @@ if __name__ == "__main__":
 
     # Plot Coriolis Torque
     ax0 = fig.add_subplot(2, 4, 3)
-    ax0.set_title(r"$\displaystyle\mathbf{c}(\mathbf{q}, \dot{\mathbf{q}})$")
+    ax0.set_title("c(q, q_dot)")
     ax0.set_ylabel("Torque [Nm]")
     ax0.set_ylim(y_c_low[0], y_c_max[0])
     ax0.set_xticks(ticks)
@@ -326,7 +325,7 @@ if __name__ == "__main__":
     ax0.set_xlim(divider[0], divider[-1])
 
     ax1 = fig.add_subplot(2, 4, 7)
-    ax1.text(s=r"\textbf{(c)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax1.text(s="(c)", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax1.transAxes)
 
     ax1.set_ylabel("Torque [Nm]")
@@ -346,7 +345,7 @@ if __name__ == "__main__":
 
     # Plot Gravity
     ax0 = fig.add_subplot(2, 4, 4)
-    ax0.set_title(r"$\displaystyle\mathbf{g}(\mathbf{q})$")
+    ax0.set_title("g(q)")
     ax0.set_ylabel("Torque [Nm]")
     ax0.set_ylim(y_g_low[0], y_g_max[0])
     ax0.set_xticks(ticks)
@@ -355,7 +354,7 @@ if __name__ == "__main__":
     ax0.set_xlim(divider[0], divider[-1])
 
     ax1 = fig.add_subplot(2, 4, 8)
-    ax1.text(s=r"\textbf{(d)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax1.text(s="(d)", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax1.transAxes)
 
     ax1.set_ylabel("Torque [Nm]")
@@ -373,8 +372,8 @@ if __name__ == "__main__":
     ax0.plot(delan_g[:, 0], color=color_i[0], alpha=plot_alpha)
     ax1.plot(delan_g[:, 1], color=color_i[0], alpha=plot_alpha)
 
-    fig.savefig("figures/DeLaN_Performance.pdf", format="pdf")
-    fig.savefig("figures/DeLaN_Performance.png", format="png")
+    #fig.savefig("figures/DeLaN_Performance.pdf", format="pdf")
+    #fig.savefig("figures/DeLaN_Performance.png", format="png")
 
     if render:
         plt.show()

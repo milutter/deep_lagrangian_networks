@@ -12,12 +12,13 @@ import dill as pickle
 
 try:
     mp.use("Qt5Agg")
-    mp.rc('text', usetex=True)
-    mp.rcParams['text.latex.preamble'] = [r"\usepackage{amsmath}"]
+    mp.rc('text', usetex=False)
+    #mp.rcParams['text.latex.preamble'] = r"\usepackage{amsmath}"
 
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
     import matplotlib.cm as cm
+    import matplotlib
 
 except ImportError:
     pass
@@ -41,11 +42,11 @@ if __name__ == "__main__":
     module_key = ["DeLaN", "DeLaN", "HNN", "HNN", "Network"]
 
     colors = {
-        "DeLaN structured": cm.get_cmap(cm.Set1)(0),
-        "DeLaN black_box": cm.get_cmap(cm.Set1)(1),
-        "HNN structured": cm.get_cmap(cm.Set1)(2),
-        "HNN black_box": cm.get_cmap(cm.Set1)(3),
-        "Network black_box": cm.get_cmap(cm.Set1)(4),
+        "DeLaN structured": matplotlib.colormaps.get_cmap(cm.Set1)(0),
+        "DeLaN black_box": matplotlib.colormaps.get_cmap(cm.Set1)(1),
+        "HNN structured": matplotlib.colormaps.get_cmap(cm.Set1)(2),
+        "HNN black_box": matplotlib.colormaps.get_cmap(cm.Set1)(3),
+        "Network black_box": matplotlib.colormaps.get_cmap(cm.Set1)(4),
     }
 
     results = {}
@@ -85,8 +86,8 @@ if __name__ == "__main__":
 
         vpt = np.mean(vpt), np.std(vpt)
 
-        unit = r"\text{s}"
-        string = f"${xd_error[0]:.1e}{'}'} \pm {xd_error[1]:.1e}{'}'}$    &    ${vpt[0]*dt:.2f}{unit} \pm {vpt[1]*dt:.2f}{unit}$ \\\\".replace("e-", r"\mathrm{e}{-").replace("e+", r"\mathrm{e}{+")
+        unit = "s"
+        string = f"{xd_error[0]:.1e} +- {xd_error[1]:.1e}    &    {vpt[0]*dt:.2f}{unit} +- {vpt[1]*dt:.2f}{unit}"
         print(f"{key:20} -     " + string)
 
     test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
@@ -124,7 +125,6 @@ if __name__ == "__main__":
     H_lim = [-0.01, +0.01] if dataset == "uniform" else [-2.75, +2.75]
     err_min, err_max = 1.e-5, 1.e3
 
-    plt.rc('text', usetex=True)
     color_i = ["r", "b", "g", "k"]
 
     ticks = np.array(divider)
@@ -132,7 +132,7 @@ if __name__ == "__main__":
 
     fig = plt.figure(figsize=(24.0 / 1.54, 8.0 / 1.54), dpi=100)
     fig.subplots_adjust(left=0.06, bottom=0.12, right=0.98, top=0.95, wspace=0.24, hspace=0.2)
-    fig.canvas.set_window_title('')
+    fig.canvas.manager.set_window_title('')
 
     legend = [
         mp.patches.Patch(color=colors["DeLaN structured"], label="DeLaN - Structured Lagrangian"),
@@ -143,10 +143,10 @@ if __name__ == "__main__":
         mp.patches.Patch(color="k", label="Ground Truth")]
 
     ax0 = fig.add_subplot(3, 4, 1)
-    ax0.set_title(r"Generalized Position $\mathbf{q}$")
-    ax0.text(s=r"\textbf{Joint 0}", x=-0.25, y=.5, fontsize=12, fontweight="bold", rotation=90,
+    ax0.set_title("Generalized Position q")
+    ax0.text(s="Joint 0", x=-0.25, y=.5, fontsize=12, fontweight="bold", rotation=90,
              horizontalalignment="center", verticalalignment="center", transform=ax0.transAxes)
-    ax0.set_ylabel(r"$\mathbf{q}_0$ [Rad]")
+    ax0.set_ylabel("q_0 [Rad]")
     ax0.get_yaxis().set_label_coords(-0.2, 0.5)
     ax0.set_ylim(q_low[0], q_max[0])
     ax0.set_xticks(ticks)
@@ -156,10 +156,10 @@ if __name__ == "__main__":
     ax0.yaxis.set_label_coords(y_offset, 0.5)
 
     ax1 = fig.add_subplot(3, 4, 5)
-    ax1.text(s=r"\textbf{Joint 1}", x=-.25, y=0.5, fontsize=12, fontweight="bold", rotation=90,
+    ax1.text(s="Joint 1", x=-.25, y=0.5, fontsize=12, fontweight="bold", rotation=90,
              horizontalalignment="center", verticalalignment="center", transform=ax1.transAxes)
 
-    ax1.set_ylabel(r"$\mathbf{q}_1$ [Rad]")
+    ax1.set_ylabel("q_1 [Rad]")
     ax1.get_yaxis().set_label_coords(-0.2, 0.5)
     ax1.set_ylim(q_low[1], q_max[1])
     ax1.set_xticks(ticks)
@@ -169,10 +169,10 @@ if __name__ == "__main__":
     ax1.yaxis.set_label_coords(y_offset, 0.5)
 
     ax2 = fig.add_subplot(3, 4, 9)
-    ax2.text(s=r"\textbf{Error}", x=-.25, y=0.5, fontsize=12, fontweight="bold", rotation=90,
+    ax2.text(s="Error", x=-.25, y=0.5, fontsize=12, fontweight="bold", rotation=90,
              horizontalalignment="center", verticalalignment="center", transform=ax2.transAxes)
 
-    ax2.text(s=r"\textbf{(a)}", x=.5, y=-0.35, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax2.text(s="(a)", x=.5, y=-0.35, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax2.transAxes)
 
     ax2.get_yaxis().set_label_coords(-0.2, 0.5)
@@ -182,7 +182,7 @@ if __name__ == "__main__":
     ax2.set_xlim(divider[0], divider[n_test])
     ax2.set_ylim(err_min, err_max)
     ax2.set_yscale('log')
-    ax2.set_ylabel(r"Position Error")
+    ax2.set_ylabel("Position Error")
     ax2.yaxis.set_label_coords(y_offset, 0.5)
     ax2.axhline(vpt_th, color="k", linestyle="--")
 
@@ -217,8 +217,8 @@ if __name__ == "__main__":
 
     # Plot Mass Torque
     ax0 = fig.add_subplot(3, 4, 2)
-    ax0.set_title(r"Generalized Velocity $\dot{\mathbf{q}}$")
-    ax0.set_ylabel(r"$\dot{\mathbf{q}}_0$ [Rad/s]")
+    ax0.set_title("Generalized Velocity q_dot")
+    ax0.set_ylabel("q_dot_0 [Rad/s]")
     ax0.set_ylim(qd_low[0], qd_max[0])
     ax0.set_xticks(ticks)
     ax0.set_xticklabels(test_labels)
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     ax0.yaxis.set_label_coords(y_offset, 0.5)
 
     ax1 = fig.add_subplot(3, 4, 6)
-    ax1.set_ylabel(r"$\dot{\mathbf{q}}_{1}$ [Rad/s]")
+    ax1.set_ylabel("q_dot_1 [Rad/s]")
     ax1.set_ylim(qd_low[1], qd_max[1])
     ax1.set_xticks(ticks)
     ax1.set_xticklabels(test_labels)
@@ -236,7 +236,7 @@ if __name__ == "__main__":
     ax1.yaxis.set_label_coords(y_offset, 0.5)
 
     ax2 = fig.add_subplot(3, 4, 10)
-    ax2.text(s=r"\textbf{(b)}", x=.5, y=-0.35, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax2.text(s="(b)", x=.5, y=-0.35, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax2.transAxes)
 
     ax2.get_yaxis().set_label_coords(-0.2, 0.5)
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     ax2.set_xlim(divider[0], divider[n_test])
     ax2.set_ylim(err_min, err_max)
     ax2.set_yscale('log')
-    ax2.set_ylabel(r"Velocity Error")
+    ax2.set_ylabel("Velocity Error")
     ax2.yaxis.set_label_coords(y_offset, 0.5)
 
     # Plot Ground Truth Inertial Torque:
@@ -278,8 +278,8 @@ if __name__ == "__main__":
 
     # Plot Coriolis Torque
     ax0 = fig.add_subplot(3, 4, 3)
-    ax0.set_title(r"Generalized Momentum $\mathbf{p}$")
-    ax0.set_ylabel(r"$\mathbf{p}_0$")
+    ax0.set_title("Generalized Momentum p")
+    ax0.set_ylabel("p_0")
     ax0.set_ylim(p_low[0], p_max[0])
     ax0.set_xticks(ticks)
     ax0.set_xticklabels(test_labels)
@@ -288,7 +288,7 @@ if __name__ == "__main__":
     ax0.yaxis.set_label_coords(y_offset, 0.5)
 
     ax1 = fig.add_subplot(3, 4, 7)
-    ax1.set_ylabel(r"$\mathbf{p}_1$")
+    ax1.set_ylabel("p_1")
     ax1.set_ylim(p_low[1], p_max[1])
     ax1.set_xticks(ticks)
     ax1.set_xticklabels(test_labels)
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     ax1.yaxis.set_label_coords(y_offset, 0.5)
 
     ax2 = fig.add_subplot(3, 4, 11)
-    ax2.text(s=r"\textbf{(c)}", x=.5, y=-0.35, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax2.text(s="(c)", x=.5, y=-0.35, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax2.transAxes)
 
     ax2.get_yaxis().set_label_coords(-0.2, 0.5)
@@ -307,7 +307,7 @@ if __name__ == "__main__":
     ax2.set_xlim(divider[0], divider[n_test])
     ax2.set_ylim(err_min, err_max)
     ax2.set_yscale('log')
-    ax2.set_ylabel(r"Impulse Error")
+    ax2.set_ylabel("Impulse Error")
     ax2.yaxis.set_label_coords(y_offset, 0.5)
 
     # Plot Ground Truth Coriolis & Centrifugal Torque:
@@ -339,8 +339,8 @@ if __name__ == "__main__":
 
     # Plot Gravity
     ax0 = fig.add_subplot(3, 4, 4)
-    ax0.set_title(r"Normalized Energy $\mathcal{H}$")
-    ax0.set_ylabel("$\mathcal{H}$")
+    ax0.set_title("Normalized Energy H")
+    ax0.set_ylabel("H")
     ax0.yaxis.set_label_coords(y_offset, 0.5)
 
     ax0.set_ylim(H_lim[0], H_lim[1])
@@ -364,7 +364,7 @@ if __name__ == "__main__":
         ax0.fill_between(x, H_pred_min[:], H_pred_max[:], color=color, alpha=plot_alpha/8.)
 
     ax2 = fig.add_subplot(3, 4, 12)
-    ax2.text(s=r"\textbf{(d)}", x=.5, y=-0.35, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax2.text(s="(d)", x=.5, y=-0.35, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax2.transAxes)
 
     ax2.set_frame_on(False)

@@ -147,7 +147,7 @@ def rollout(params, key, q0, qd0, p0, tau, hamiltonian, forward_model, integrato
     _, (q, qd, p, H) = jax.lax.scan(step, (q0, p0), tau[:-1])
 
     # Append initial value to trajectory
-    q, qd, p, H = jax.tree_map(
+    q, qd, p, H = jax.tree.map(
         lambda x0, x: jnp.concatenate([x0, x[:, 0]], axis=0),
         (q0, qd0, p0, H0), (q, qd, p, H))
 
