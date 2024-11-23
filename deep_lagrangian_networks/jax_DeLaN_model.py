@@ -21,7 +21,6 @@ def mass_matrix_fn(q, n_dof, shape, activation, epsilon, shift):
 
     # Compute Matrix Indices
     mat_idx = np.tril_indices(n_dof)
-    mat_idx = jax.ops.index[..., mat_idx[0], mat_idx[1]]
 
     # Compute Mass Matrix
     net = hk.nets.MLP(
@@ -41,7 +40,7 @@ def mass_matrix_fn(q, n_dof, shape, activation, epsilon, shift):
     vec_lower_triangular = jnp.concatenate((l_diagonal, l_off_diagonal), axis=-1)[..., idx]
 
     triangular_mat = jnp.zeros((n_dof, n_dof))
-    triangular_mat = jax.ops.index_update(triangular_mat, mat_idx, vec_lower_triangular[:])
+    triangular_mat = triangular_mat.at[mat_idx].set(vec_lower_triangular[:])
 
     mass_mat = jnp.matmul(triangular_mat, triangular_mat.transpose())
     return mass_mat
@@ -212,7 +211,7 @@ def rollout(params, key, q0, qd0, p0, tau, lagrangian, forward_model, integrator
     _, (q, qd, p, H) = jax.lax.scan(step, (q0, qd0), tau[:-1])
 
     # Append initial value to trajectory
-    q, qd, p, H = jax.tree_map(
+    q, qd, p, H = jax.tree.map(
         lambda x0, x: jnp.concatenate([x0, x[:, 0]], axis=0),
         (q0, qd0, p0, H0), (q, qd, p, H))
 

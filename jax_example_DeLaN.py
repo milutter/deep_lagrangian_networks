@@ -9,11 +9,12 @@ import jax.numpy as jnp
 import matplotlib as mp
 import haiku as hk
 import dill as pickle
+import functools
 
 try:
     mp.use("Qt5Agg")
-    mp.rc('text', usetex=True)
-    mp.rcParams['text.latex.preamble'] = [r"\usepackage{amsmath}"]
+    mp.rc('text', usetex=False)
+    #mp.rcParams['text.latex.preamble'] = r"\usepackage{amsmath}"
 
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
@@ -122,7 +123,7 @@ if __name__ == "__main__":
     # Construct DeLaN:
     t0 = time.perf_counter()
 
-    lagrangian_fn = hk.transform(jax.partial(
+    lagrangian_fn = hk.transform(functools.partial(
         hyper['lagrangian_type'],
         n_dof=n_dof,
         shape=(hyper['n_width'],) * hyper['n_depth'],
@@ -140,7 +141,7 @@ if __name__ == "__main__":
 
     # Trace Model:
     lagrangian = lagrangian_fn.apply
-    delan_model = jax.jit(jax.partial(delan.dynamics_model, lagrangian=lagrangian, n_dof=n_dof))
+    delan_model = jax.jit(functools.partial(delan.dynamics_model, lagrangian=lagrangian, n_dof=n_dof))
     _ = delan_model(params, None, q[:1], qd[:1], qdd[:1], tau[:1])
     t_build = time.perf_counter() - t0
     print(f"DeLaN Build Time     = {t_build:.2f}s")
@@ -154,7 +155,7 @@ if __name__ == "__main__":
     )
 
     opt_state = optimizer.init(params)
-    loss_fn = jax.partial(
+    loss_fn = functools.partial(
         delan.inverse_loss_fn,
         lagrangian=lagrangian,
         n_dof=n_dof,
@@ -183,7 +184,7 @@ if __name__ == "__main__":
     epoch_i = 0
     while epoch_i < hyper['max_epoch'] and not load_model:
         n_batches = 0
-        logs = jax.tree_map(lambda x: x * 0.0, logs)
+        logs = jax.tree.map(lambda x: x * 0.0, logs)
 
         for data_batch in mem:
             t0_batch = time.perf_counter()
@@ -193,12 +194,12 @@ if __name__ == "__main__":
 
             # Update logs:
             n_batches += 1
-            logs = jax.tree_map(lambda x, y: x + y, logs, batch_logs)
+            logs = jax.tree.map(lambda x, y: x + y, logs, batch_logs)
             t_batch = time.perf_counter() - t0_batch
 
         # Update Epoch Loss & Computation Time:
         epoch_i += 1
-        logs = jax.tree_map(lambda x: x/n_batches, logs)
+        logs = jax.tree.map(lambda x: x/n_batches, logs)
 
         if epoch_i == 1 or np.mod(epoch_i, 100) == 0:
             print("Epoch {0:05d}: ".format(epoch_i), end=" ")
@@ -268,7 +269,6 @@ if __name__ == "__main__":
     y_g_low = np.clip(1.2 * np.min(np.vstack((test_g, delan_g)), axis=0), -np.inf, -0.01)
     y_g_max = np.clip(1.2 * np.max(np.vstack((test_g, delan_g)), axis=0), 0.01, np.inf)
 
-    plt.rc('text', usetex=True)
     color_i = ["r", "b", "g", "k"]
 
     ticks = np.array(divider)
@@ -276,15 +276,15 @@ if __name__ == "__main__":
 
     fig = plt.figure(figsize=(24.0/1.54, 8.0/1.54), dpi=100)
     fig.subplots_adjust(left=0.08, bottom=0.12, right=0.98, top=0.95, wspace=0.3, hspace=0.2)
-    fig.canvas.set_window_title('Seed = {0}'.format(seed))
+    fig.canvas.manager.set_window_title('Seed = {0}'.format(seed))
 
     legend = [mp.patches.Patch(color=color_i[0], label="DeLaN"),
               mp.patches.Patch(color="k", label="Ground Truth")]
 
     # Plot Torque
     ax0 = fig.add_subplot(2, 4, 1)
-    ax0.set_title(r"$\boldsymbol{\tau}$")
-    ax0.text(s=r"\textbf{Joint 0}", x=-0.35, y=.5, fontsize=12, fontweight="bold", rotation=90, horizontalalignment="center", verticalalignment="center", transform=ax0.transAxes)
+    ax0.set_title("tau")
+    ax0.text(s="Joint 0", x=-0.35, y=.5, fontsize=12, fontweight="bold", rotation=90, horizontalalignment="center", verticalalignment="center", transform=ax0.transAxes)
     ax0.set_ylabel("Torque [Nm]")
     ax0.get_yaxis().set_label_coords(-0.2, 0.5)
     ax0.set_ylim(y_t_low[0], y_t_max[0])
@@ -294,10 +294,10 @@ if __name__ == "__main__":
     ax0.set_xlim(divider[0], divider[-1])
 
     ax1 = fig.add_subplot(2, 4, 5)
-    ax1.text(s=r"\textbf{Joint 1}", x=-.35, y=0.5, fontsize=12, fontweight="bold", rotation=90,
+    ax1.text(s="Joint 1", x=-.35, y=0.5, fontsize=12, fontweight="bold", rotation=90,
              horizontalalignment="center", verticalalignment="center", transform=ax1.transAxes)
 
-    ax1.text(s=r"\textbf{(a)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax1.text(s="(a)", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax1.transAxes)
 
     ax1.set_ylabel("Torque [Nm]")
@@ -320,7 +320,7 @@ if __name__ == "__main__":
 
     # Plot Mass Torque
     ax0 = fig.add_subplot(2, 4, 2)
-    ax0.set_title(r"$\displaystyle\mathbf{H}(\mathbf{q}) \ddot{\mathbf{q}}$")
+    ax0.set_title("H(q) * q_ddot")
     ax0.set_ylabel("Torque [Nm]")
     ax0.set_ylim(y_m_low[0], y_m_max[0])
     ax0.set_xticks(ticks)
@@ -329,7 +329,7 @@ if __name__ == "__main__":
     ax0.set_xlim(divider[0], divider[-1])
 
     ax1 = fig.add_subplot(2, 4, 6)
-    ax1.text(s=r"\textbf{(b)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax1.text(s="(b)", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax1.transAxes)
 
     ax1.set_ylabel("Torque [Nm]")
@@ -349,7 +349,7 @@ if __name__ == "__main__":
 
     # Plot Coriolis Torque
     ax0 = fig.add_subplot(2, 4, 3)
-    ax0.set_title(r"$\displaystyle\mathbf{c}(\mathbf{q}, \dot{\mathbf{q}})$")
+    ax0.set_title("c(q, q_dot)")
     ax0.set_ylabel("Torque [Nm]")
     ax0.set_ylim(y_c_low[0], y_c_max[0])
     ax0.set_xticks(ticks)
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     ax0.set_xlim(divider[0], divider[-1])
 
     ax1 = fig.add_subplot(2, 4, 7)
-    ax1.text(s=r"\textbf{(c)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax1.text(s="(c)", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax1.transAxes)
 
     ax1.set_ylabel("Torque [Nm]")
@@ -378,7 +378,7 @@ if __name__ == "__main__":
 
     # Plot Gravity
     ax0 = fig.add_subplot(2, 4, 4)
-    ax0.set_title(r"$\displaystyle\mathbf{g}(\mathbf{q})$")
+    ax0.set_title("g(q)")
     ax0.set_ylabel("Torque [Nm]")
     ax0.set_ylim(y_g_low[0], y_g_max[0])
     ax0.set_xticks(ticks)
@@ -387,7 +387,7 @@ if __name__ == "__main__":
     ax0.set_xlim(divider[0], divider[-1])
 
     ax1 = fig.add_subplot(2, 4, 8)
-    ax1.text(s=r"\textbf{(d)}", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
+    ax1.text(s="(d)", x=.5, y=-0.25, fontsize=12, fontweight="bold", horizontalalignment="center",
              verticalalignment="center", transform=ax1.transAxes)
 
     ax1.set_ylabel("Torque [Nm]")
@@ -405,8 +405,8 @@ if __name__ == "__main__":
     ax0.plot(delan_g[:, 0], color=color_i[0], alpha=plot_alpha)
     ax1.plot(delan_g[:, 1], color=color_i[0], alpha=plot_alpha)
 
-    fig.savefig(f"figures/jax_DeLaN_{model_id}_{hyper['dataset']}_Performance.pdf", format="pdf")
-    fig.savefig(f"figures/jax_DeLaN_{model_id}_{hyper['dataset']}_Performance.png", format="png")
+    #fig.savefig(f"figures/jax_DeLaN_{model_id}_{hyper['dataset']}_Performance.pdf", format="pdf")
+    #fig.savefig(f"figures/jax_DeLaN_{model_id}_{hyper['dataset']}_Performance.png", format="png")
 
     if render:
         plt.show()

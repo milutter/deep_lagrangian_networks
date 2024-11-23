@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import haiku as hk
 import numpy as np
+import functools
 
 
 def dynamics_network(q, qd, qdd, tau, n_dof, shape, activation, epsilon, shift):
@@ -78,7 +79,7 @@ def loss_fn(params, q, qd, qdd, tau, model, n_dof, norm_tau, norm_qdd):
 
 
 def rollout(params, key, q0, qd0, p0, tau, black_box_model, forward_model, integrator, dt):
-    inv_model = jax.partial(inverse_model, black_box_model=black_box_model)
+    inv_model = functools.partial(inverse_model, black_box_model=black_box_model)
     H0 = jnp.zeros((1,))
 
     def step(x, u):
@@ -101,7 +102,7 @@ def rollout(params, key, q0, qd0, p0, tau, black_box_model, forward_model, integ
     _, (q, qd, p, H) = jax.lax.scan(step, (q0, qd0), tau[:-1])
 
     # Append initial value to trajectory
-    q, qd, p, H = jax.tree_map(
+    q, qd, p, H = jax.tree.map(
         lambda x0, x: jnp.concatenate([x0, x[:, 0]], axis=0),
         (q0, qd0, p0, H0), (q, qd, p, H))
 

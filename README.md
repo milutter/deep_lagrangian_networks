@@ -54,17 +54,62 @@ Figure 2: (a) The torque $`\bm{\tau}`$ required to generate the characters 'a', 
 
 **Installation:** \
 For installation this python package can be cloned and installed via pip
-```
-git clone https://github.com/milutter/deep_lagrangian_networks.git deep_lagrangian_networks
-pip install deep_lagrangian_networks
 
-python deep_lagrangian_networks/example_DeLaN.py -r 1
+It is suggested to work within a venv
+```powershell
+git clone https://github.com/milutter/deep_lagrangian_networks.git deep_lagrangian_networks
+cd deep_lagrangian_networks
+pip install .
+
+# Other dependencies (Using JAX CPU version. Optionally, change this to the GPU version)
+pip install -U jax
+pip install -U dm-haiku
+pip install optax
+pip install PyQt5
+
+# (OPTIONAL) Use pytorch on GPU
+#   To find compatible version, run
+#     powershell:
+#       nvidia-smi.exe
+#     bash:
+#       nvidia-smi
+#   In the output, look for "CUDA Version"
+#   Then get the install command from
+#   https://pytorch.org/
+#   e.g.
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+
+OR to use the requirements file
+```powershell
+git clone https://github.com/milutter/deep_lagrangian_networks.git deep_lagrangian_networks
+cd deep_lagrangian_networks
+python -m pip install -r requirements-cpu.txt
+```
+
+**Run:** \
+Train model and run
+```powershell
+# pytorch version
+python ./example_DeLaN.py
+
+# JAX version
+python ./jax_example_DeLaN.py
+```
+
+Load model and run (requires training first)
+```powershell
+# pytorch version
+python ./example_DeLaN.py -l 1
+
+# JAX version
+python ./jax_example_DeLaN.py -l 1
 ```
 
 **Citation:** \
 If you use this implementation within your paper, please cite:
 
-```
+```bibtex
 @inproceedings{lutter2019deep,
   author =      "Lutter, M. and  Ritter, C. and  Peters, J.",
   year =        "2019",
